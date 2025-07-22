@@ -4,9 +4,9 @@ from backend.src.config.settings import settings
 
 
 def get_chat_model(
-        model: str = settings.OPENAI_CHAT_MODEL,
-        api_key: str = settings.OPENAI_API_KEY,
-        base_url: str = settings.OPENAI_BASE_URL,
+        model: str = settings.DEEPSEEK_CHAT_MODEL,
+        api_key: str = settings.DEEPSEEK_API_KEY,
+        base_url: str = settings.DEEPSEEK_BASE_URL,
         temperature: float = 0.7,
         **kwargs
 ):
@@ -22,3 +22,6 @@ def get_chat_model(
         temperature=temperature,
         **kwargs
     )
+
+
+get_chat_model().invoke("你好")

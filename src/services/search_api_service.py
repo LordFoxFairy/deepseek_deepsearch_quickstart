@@ -30,10 +30,11 @@ class SearchAPIService:
         """
         print(f"正在执行搜索查询: {query}，请求 {num_results} 条结果 (使用 googlesearch 库)...")
         results: List[SearchResult] = []
+        proxy = None
         try:
             # 调用 googlesearch 库的 search 函数，并设置 advanced=True 以获取 SearchResult 对象
             # search 函数返回一个生成器
-            for item in search(term=query, num_results=num_results, advanced=True):
+            for item in search(term=query, num_results=num_results, advanced=True, timeout=30):
                 # 确保 item 是 googlesearch.SearchResult 实例
                 if isinstance(item, GoogleSearchResult):
                     results.append(

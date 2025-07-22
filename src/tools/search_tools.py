@@ -1,7 +1,8 @@
-from langchain_core.tools import StructuredTool  # 导入 StructuredTool
-from backend.src.services.search_api_service import SearchAPIService
+from langchain_core.tools import StructuredTool
 from backend.src.schemas.tool_models import SearchToolInput, SearchResult
 from typing import List, Any  # 导入 Any 用于 kwargs 类型提示
+
+from backend.src.services.search_api_service import SearchAPIService
 
 # 初始化搜索服务实例
 search_service = SearchAPIService()
@@ -52,9 +53,9 @@ if __name__ == "__main__":
         # 传入字典作为工具的输入，StructuredTool 会将这些 kwargs 传递给 _run_search
         results = search_tool.invoke({"query": test_query, "num_results": 2})
         if results:
-            print(f"搜索工具返回了 {len(results)} 条结果: ")
+            print(f"搜索工具返回了 {len(results)} 条结果:")
             for i, res in enumerate(results):
-                print(f"  结果 {i + 1}: ")
+                print(f"  结果 {i + 1}:")
                 print(f"    标题: {res.title}")
                 print(f"    URL: {res.url}")
                 print(f"    摘要: {res.snippet[:100]}...")

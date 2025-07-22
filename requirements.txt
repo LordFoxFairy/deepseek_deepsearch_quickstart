@@ -1,0 +1,32 @@
+# backend/requirements.txt
+
+# Langchain 相关依赖
+langchain-core
+langchain-openai
+langchain-community
+
+# LangGraph 框架
+langgraph
+
+# LlamaIndex 相关依赖
+llama-index
+llama-index-llms-openai
+llama-index-embeddings-openai
+
+# Web 框架和服务器
+fastapi
+uvicorn[standard]
+
+# 配置和数据处理
+python-dotenv
+pydantic
+
+# HTTP 请求和网页解析
+requests
+beautifulsoup4
+google_search
+
+# 异步和工具相关
+nest_asyncio
+aiohttp
+tiktoken

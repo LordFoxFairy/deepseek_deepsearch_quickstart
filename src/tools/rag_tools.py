@@ -1,11 +1,11 @@
 from langchain_core.tools import StructuredTool
-from backend.src.services.llama_index_service import LlamaIndexService
+# 从 services 模块导入已经初始化的 llama_index_service 实例
+from backend.src.services.llama_index_service import llama_index_service
 from backend.src.schemas.tool_models import RagToolInput, RagResult
-from typing import List, Any  # 导入 Any 用于 kwargs 类型提示
+from typing import List, Any
 
-# 初始化 LlamaIndex 服务实例
-llama_index_service = LlamaIndexService()
-
+# 移除这里的初始化，直接使用导入的 llama_index_service 实例
+# llama_index_service = LlamaIndexService()
 
 def _run_rag_query(**kwargs: Any) -> List[RagResult]:
     """
@@ -24,17 +24,14 @@ def _run_rag_query(**kwargs: Any) -> List[RagResult]:
         tool_input = RagToolInput(**kwargs)
     except Exception as e:
         print(f"创建 RagToolInput 失败: {e}. 传入的参数: {kwargs}")
-        # 可以选择抛出异常或返回空列表
         raise ValueError(f"无效的工具输入: {e}")
 
     # 从 Pydantic 输入模型中解构参数
     query = tool_input.query
     top_k = tool_input.top_k
 
-    # 在实际使用 RAG 工具前，需要确保 LlamaIndex 已经构建了索引。
-    # 这里我们假设索引已经通过某种方式（例如，在应用启动时或通过特定 API）被填充。
+    # 调用导入的 llama_index_service 实例
     return llama_index_service.retrieve(query=query, top_k=top_k)
-
 
 # 定义 Langchain RAG 工具
 # 使用 StructuredTool 来确保 Pydantic 输入模型被正确处理。
@@ -42,7 +39,7 @@ rag_tool = StructuredTool(
     name="rag_tool",
     description="用于从内部知识库或文档中检索相关信息的工具。输入是一个查询字符串和可选的返回文档数量。",
     func=_run_rag_query,
-    args_schema=RagToolInput  # 使用 Pydantic 模型作为工具的输入 Schema
+    args_schema=RagToolInput # 使用 Pydantic 模型作为工具的输入 Schema
 )
 
 if __name__ == "__main__":
@@ -67,6 +64,7 @@ if __name__ == "__main__":
         "https://example.com/edge-ai"
     ]
     print("\n正在模拟创建 LlamaIndex 索引...")
+    # 直接使用导入的 llama_index_service 实例来创建或更新索引
     llama_index_service.create_or_update_index(sample_documents, sample_doc_ids)
     print("模拟索引创建完成。")
 
@@ -74,13 +72,13 @@ if __name__ == "__main__":
     test_query = "2024年大型语言模型有哪些新进展？"
     print(f"\n正在通过 rag_tool 调用执行 RAG 查询: '{test_query}'...")
     try:
-        # 传入字典作为工具的输入，StructuredTool 会将这些 kwargs 传递给 _run_rag_query
+        # 传入字典作为工具的输入
         results = rag_tool.invoke({"query": test_query, "top_k": 2})
 
         if results:
-            print(f"RAG 工具返回了 {len(results)} 条结果: ")
+            print(f"RAG 工具返回了 {len(results)} 条结果:")
             for i, res in enumerate(results):
-                print(f"  结果 {i + 1}: ")
+                print(f"  结果 {i+1}:")
                 print(f"    内容: {res.content[:100]}...")
                 print(f"    来源: {res.source}")
         else:

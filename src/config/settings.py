@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 从 .env 文件加载环境变量
 load_dotenv()
 
+
 class Settings(BaseSettings):
     """
     从环境变量加载应用程序设置。
@@ -12,11 +13,17 @@ class Settings(BaseSettings):
     """
 
     # OpenAI 及兼容 OpenAI 的模型配置
-    OPENAI_API_KEY: str = Field(..., description="用于身份验证的 OpenAI 或兼容 OpenAI 的 API 密钥")
-    OPENAI_CHAT_MODEL: str = Field("deepseek-chat",
-                                   description="默认的聊天模型名称（可以是 OpenAI 或兼容模型，如 DeepSeek）")
-    OPENAI_BASE_URL: str = Field("https://api.deepseek.com/chat/completions",
-                                 description="OpenAI 或兼容 OpenAI API 的基础 URL")
+    DASH_SCOPE_API_KEY: str = Field(..., description="用于身份验证的 OpenAI 或兼容 OpenAI 的 API 密钥")
+    DASH_SCOPE_BASE_URL: str = Field("https://api.deepseek.com",
+                                     description="OpenAI 或兼容 OpenAI API 的基础 URL")
+    DASH_SCOPE_EMBEDDING_MODEL: str = Field("text-embedding-ada-002",  # 使用适合的嵌入模型
+                                            description="嵌入模型")
+
+    DEEPSEEK_API_KEY: str = Field(..., description="用于身份验证的 OpenAI 或兼容 OpenAI 的 API 密钥")
+    DEEPSEEK_BASE_URL: str = Field("https://api.deepseek.com",
+                                   description="OpenAI 或兼容 OpenAI API 的基础 URL")
+    DEEPSEEK_CHAT_MODEL: str = Field("deepseek-chat",
+                                     description="默认的聊天模型名称（可以是 OpenAI 或兼容模型，如 DeepSeek）")
 
     # 通用应用程序设置
     APP_NAME: str = Field("DeepSearch Quickstart", description="应用程序名称")
