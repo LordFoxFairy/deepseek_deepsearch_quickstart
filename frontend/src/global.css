@@ -1,0 +1,33 @@
+/* frontend/src/global.css */
+
+/* 引入 Tailwind CSS 的基础、组件和工具样式 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  这里可以添加任何自定义的全局 CSS 样式。
+  例如，你可以定义一些自定义的 CSS 变量，或者覆盖 Tailwind 的默认样式。
+*/
+
+/* 示例：自定义滚动条样式 (可选) */
+/*
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+*/
