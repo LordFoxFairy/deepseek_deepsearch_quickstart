@@ -1,6 +1,7 @@
 # DeepSearch AI Agent 🚀
 
-**DeepSearch AI Agent** 是一个基于 LangGraph 和 FastAPI 构建的先进 AI 代理项目。它通过一个复杂的、自校正的流程来处理用户查询，该流程包括规划、工具执行、评估和答案生成。前端使用 React 和 Vite 构建，提供了一个流畅的聊天界面和实时的代理活动时间线。
+**DeepSearch AI Agent** 是一个基于 LangGraph 和 FastAPI 构建的 AI 代理项目。它通过一个复杂的、自校正的流程来处理用户查询，该流程包括规划、工具执行、评估和答案生成。前端使用 React 和 Vite 构建，提供了一个流畅的聊天界面和实时的代理活动时间线。
+![img.png](img.png)
 
 ## ✨ 功能
 
