@@ -197,3 +197,8 @@ deepseek_deepsearch_quickstart/
     ```
 
   - **响应**: 一个 `text/event-stream` 流，包含多种类型的事件，如 `activity_update` 和 `final_response`。
+  -
+## history
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=LordFoxFairy/deepseek_deepsearch_quickstart&type=Date)](https://www.star-history.com/#LordFoxFairy/deepseek_deepsearch_quickstart&Date)
