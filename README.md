@@ -33,7 +33,7 @@
 
 代理的执行流程由一个主管（Supervisor）节点控制，该节点根据当前状态决定将任务路由到哪个子代理：
 
-```
+```mermaid
 graph TD
     A[用户请求] --> B(Supervisor);
     B --> C{有计划吗？};
