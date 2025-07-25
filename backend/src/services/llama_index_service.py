@@ -7,6 +7,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.vector_stores import SimpleVectorStore
 from backend.src.config.settings import settings
+from backend.src.llms.openai_llm import get_chat_model
 from backend.src.schemas.tool_models import RagResult, SearchResult
 
 
@@ -30,10 +31,10 @@ class LlamaIndexService:
         )
 
         # 配置LlamaIndex使用的LLM
-        self.llm = OpenAI(
+        self.llm = get_chat_model(
             model=settings.DEEPSEEK_CHAT_MODEL,
             api_key=settings.DEEPSEEK_API_KEY,
-            api_base=settings.DEEPSEEK_BASE_URL
+            base_url=settings.DEEPSEEK_BASE_URL
         )
 
         # 初始化一个简单的内存向量存储 (仅用于演示)

@@ -28,6 +28,8 @@ WRITER_PROMPT = ChatPromptTemplate.from_messages(
 
 **可用数据**:
 - **用户请求**: {input}
+- **写作大纲**: 
+{plan}
 - **已收集的研究内容 (原始文本汇总)**:
 {raw_research_content}
 - **已收集的研究结果 (结构化数据)**:

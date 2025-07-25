@@ -22,6 +22,3 @@ def get_chat_model(
         temperature=temperature,
         **kwargs
     )
-
-
-get_chat_model().invoke("你好")

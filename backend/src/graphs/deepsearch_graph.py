@@ -7,7 +7,7 @@ from langgraph.graph import StateGraph, END
 from backend.src.llms.openai_llm import get_chat_model
 from backend.src.prompts.agent_decision_prompts import SUPERVISOR_DECISION_PROMPT
 from backend.src.prompts.evaluator_prompts import EVALUATOR_PROMPT
-from backend.src.prompts.planner_prompts import PLANNER_PROMPT
+from backend.src.prompts.planner_prompts import OUTLINE_PLANNER_PROMPT, WRITER_PLANNER_PROMPT
 from backend.src.prompts.synthesis_prompts import SYNTHESIS_PROMPT
 from backend.src.prompts.writer_prompts import WRITER_PROMPT
 from backend.src.prompts.writer_reviewer_prompts import WRITER_REVIEWER_PROMPT
@@ -50,7 +50,8 @@ class DeepSearchGraph:
         将所有节点添加到工作流图中。每个节点代表代理流程中的一个特定功能或阶段。
         """
         self.workflow.add_node("supervisor", self.call_supervisor)
-        self.workflow.add_node("planner", self.call_planner)
+        self.workflow.add_node("outline_planner", self.call_outline_planner)
+        self.workflow.add_node("writer_planner", self.call_writer_planner)
         self.workflow.add_node("executor", self.call_executor)
         self.workflow.add_node("evaluator", self.call_evaluator)
         self.workflow.add_node("writer", self.call_writer)
@@ -68,7 +69,8 @@ class DeepSearchGraph:
             "supervisor",
             self.route_supervisor_action,
             {
-                "PLANNER": "planner",
+                "OUTLINE_PLANNER": "outline_planner",
+                "WRITER_PLANNER": "writer_planner",
                 "EXECUTOR": "executor",
                 "EVALUATOR": "evaluator",
                 "WRITER": "writer",
@@ -80,7 +82,8 @@ class DeepSearchGraph:
         )
 
         # 各子代理完成后返回主管以进行下一步决策的边
-        self.workflow.add_edge("planner", "supervisor")
+        self.workflow.add_edge("outline_planner", "supervisor")
+        self.workflow.add_edge("writer_planner", "supervisor")
         self.workflow.add_edge("executor", "supervisor")
         self.workflow.add_edge("evaluator", "supervisor")
         self.workflow.add_edge("reviewer", "supervisor")
@@ -96,6 +99,7 @@ class DeepSearchGraph:
         主管节点：根据当前状态，由LLM决定到下一个子代理的路由。
         同时，此处会增加步骤计数并检查最大步骤限制。
         """
+        print(f"\n--- [Step {state['step_count']}] ---")
         print("Entering 'supervisor' node: Supervisor is making a decision...")
 
         state["step_count"] += 1
@@ -126,7 +130,7 @@ class DeepSearchGraph:
         )
 
         # 尝试从LLM的响应中提取预期的决策关键词
-        expected_decisions = ["PLANNER", "EXECUTOR", "EVALUATOR", "WRITER", "REVIEWER", "SYNTHESIZER", "FINISH", "FAIL"]
+        expected_decisions = ["OUTLINE_PLANNER", "WRITER_PLANNER", "EXECUTOR", "EVALUATOR", "WRITER", "REVIEWER", "SYNTHESIZER", "FINISH", "FAIL"]
 
         raw_decision = response.content.strip().upper()
         supervisor_decision = "FAIL"  # 如果无法解析，则默认为FAIL
@@ -141,12 +145,12 @@ class DeepSearchGraph:
 
         return {"supervisor_decision": supervisor_decision, "step_count": state["step_count"]}
 
-    def call_planner(self, state: AgentState) -> Dict[str, Any]:
+    def call_outline_planner(self, state: AgentState) -> Dict[str, Any]:
         """
         规划器节点：根据用户请求和当前状态生成任务计划。
         如果存在先前的失败或研究不足，规划器应调整其策略。
         """
-        print("Entering 'planner' node: Planner is formulating a plan...")
+        print("Entering 'outline_planner' node: Planner is formulating a plan...")
 
         state["planning_attempts_count"] += 1
         print(f"Current planning attempts: {state['planning_attempts_count']}")
@@ -170,8 +174,8 @@ class DeepSearchGraph:
             no_progress_context = f"注意：代理已连续 {state['consecutive_no_progress_count']} 步未能取得有效的研究进展。请制定一个更具突破性的计划，或考虑任务的局限性。\n"
 
         response = llm.invoke(
-            PLANNER_PROMPT.format_messages(
-                input=state["input"],
+            OUTLINE_PLANNER_PROMPT.format_messages(
+                query=state["input"],
                 current_state=state,
                 failure_context=failure_context or "没有特定的失败上下文。",
                 no_progress_context=no_progress_context or "没有连续无进展的上下文。"
@@ -179,8 +183,30 @@ class DeepSearchGraph:
         )
         plan_steps = [step.strip() for step in response.content.split('\n') if step.strip()]
         print(f"Generated plan: {plan_steps}")
-        return {"plan": plan_steps, "current_step": plan_steps[0] if plan_steps else None,
+        return {"plan": plan_steps, "search_queries": plan_steps, "current_step": plan_steps[0] if plan_steps else None,
                 "supervisor_decision": "EXECUTOR", "planning_attempts_count": state["planning_attempts_count"]}
+
+    def call_writer_planner(self, state: AgentState) -> Dict[str, Any]:
+        """
+        写作规划器节点：根据已收集的研究结果，为最终报告制定一个详细的写作大纲。
+        """
+        print("Entering 'writer_planner' node: Writer Planner is formulating a writing plan...")
+
+        response = llm.invoke(
+            WRITER_PLANNER_PROMPT.format_messages(
+                query=state["input"],
+                search_results=state["research_results"]
+            )
+        )
+        writing_plan_steps = [step.strip() for step in response.content.split('\n') if step.strip()]
+        print(f"Generated writing plan: {writing_plan_steps}")
+
+        return {
+            "plan": writing_plan_steps,
+            "intermediate_steps": state["intermediate_steps"] + [
+                AIMessage(content=f"写作规划器完成规划。计划：{writing_plan_steps}")],
+            "supervisor_decision": "WRITER"
+        }
 
     def call_executor(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -372,37 +398,26 @@ class DeepSearchGraph:
         evaluation_result = response.content.strip()
         print(f"Evaluation result: {evaluation_result}")
 
-        suggested_supervisor_decision = evaluation_result.upper()
-
+        llm_decision = evaluation_result.upper()
         replan_needed = False
-        if suggested_supervisor_decision == "PLANNER":
-            replan_needed = True
 
-        # 基于研究结果状态和规划尝试次数，强制评估器建议路由
-        if suggested_supervisor_decision == "FAIL" or \
-                state["consecutive_no_progress_count"] >= NO_PROGRESS_THRESHOLD or \
-                (not has_research_results and state["step_count"] >= MAX_STEPS - 1):
-            print("评估器：由于关键条件，强制路由到FAIL。")
+        # 1. 优先处理失败条件
+        if "FAIL" in llm_decision or state["consecutive_no_progress_count"] >= NO_PROGRESS_THRESHOLD:
+            print("评估器：由于关键条件（LLM建议或连续无进展），强制路由到FAIL。")
             suggested_supervisor_decision = "FAIL"
-            replan_needed = False
+            # 2. 如果研究结果足够，进入写作规划阶段
+        elif "WRITER" in llm_decision:  # 对应 prompt 中的 WRITER 建议
+            print("评估器：研究结果足够，强制路由到WRITER_PLANNER。")
+            suggested_supervisor_decision = "WRITER_PLANNER"
+            # 3. 如果规划次数过多且有结果，也强制进入写作，避免死循环
         elif has_research_results and state["planning_attempts_count"] >= PLANNING_ATTEMPTS_THRESHOLD:
-            print(f"评估器：有研究结果且规划尝试次数 >= {PLANNING_ATTEMPTS_THRESHOLD}，强制路由到WRITER。")
-            suggested_supervisor_decision = "WRITER"
-            replan_needed = False
-        elif has_research_results and not has_final_answer and suggested_supervisor_decision != "FAIL":
-            print("评估器：有研究结果但没有最终答案，强制路由到WRITER。")
-            suggested_supervisor_decision = "WRITER"
-            replan_needed = False
-        elif has_final_answer and suggested_supervisor_decision != "FAIL":
-            print("评估器：有最终答案，强制路由到FINISH。")
-            suggested_supervisor_decision = "FINISH"
-            replan_needed = False
-        elif not has_research_results or suggested_supervisor_decision == "PLANNER":
-            print(f"评估器：没有研究结果或LLM建议PLANNER，路由到PLANNER。")
+            print(f"评估器：有研究结果且规划尝试次数 >= {PLANNING_ATTEMPTS_THRESHOLD}，强制路由到WRITER_PLANNER。")
+            suggested_supervisor_decision = "WRITER_PLANNER"
+            # 4. 默认情况是重新规划
+        else:  # 对应 prompt 中的 PLANNER 建议
+            print(f"评估器：没有足够的研究结果或LLM建议重新规划，路由到OUTLINE_PLANNER。")
             replan_needed = True
-            suggested_supervisor_decision = "PLANNER"
-        else:
-            print(f"评估器：根据LLM的建议路由：{suggested_supervisor_decision}。")
+            suggested_supervisor_decision = "OUTLINE_PLANNER"
 
         return {
             "evaluation_results": evaluation_result,
@@ -420,6 +435,7 @@ class DeepSearchGraph:
         response = llm.invoke(
             WRITER_PROMPT.format_messages(
                 input=state["input"],
+                plan=state["plan"],
                 raw_research_content=state["raw_research_content"],
                 research_results=state["research_results"]
             )
@@ -447,14 +463,18 @@ class DeepSearchGraph:
         review_result = response.content.strip()
         print(f"Review result: {review_result}")
 
-        replan_needed = False
-        suggested_supervisor_decision = "FINISH"
-
-        if "需要修改" in review_result:
+        if "OUTLINE_PLANNER" in review_result.upper():
             replan_needed = True
-            suggested_supervisor_decision = "PLANNER"
-            print("审阅者建议修改报告，返回主管进行重新规划。")
-        else:
+            suggested_supervisor_decision = "OUTLINE_PLANNER"
+            print("审阅者认为内容不足，返回主管进行重新研究。")
+        elif "WRITER_PLANNER" in review_result.upper():
+            # 注意：这里 replan_needed 必须为 False，以避免被路由器的 replan 逻辑覆盖
+            replan_needed = False
+            suggested_supervisor_decision = "WRITER_PLANNER"
+            print("审阅者认为结构有问题，返回主管调整写作大纲。")
+        else: # 默认或包含“FINISH”
+            replan_needed = False
+            suggested_supervisor_decision = "FINISH"
             print("审阅通过，报告可以直接提交。")
 
         return {
@@ -507,43 +527,32 @@ class DeepSearchGraph:
         主管路由函数：根据主管的输出决定下一个图节点。
         """
         supervisor_decision = state.get("supervisor_decision", "").strip("'\"")
+        print(f"Routing function: Received decision '{supervisor_decision}'")
 
         if state["consecutive_no_progress_count"] >= NO_PROGRESS_THRESHOLD:
             print(f"路由函数：警告：连续 {state['consecutive_no_progress_count']} 步无进展，强制路由到FAIL。")
             return "FAIL"
 
+        # 只有当 replan_needed 为 True 时，才强制跳转到 OUTLINE_PLANNER
         if state.get("replan_needed"):
-            print("路由函数：审阅者建议重新规划，强制路由到PLANNER。")
+            print("路由函数：检测到 replan_needed 标志，强制路由到OUTLINE_PLANNER。")
+            # 在这里重置标志，避免无限循环
             state["replan_needed"] = False
-            return "PLANNER"
+            return "OUTLINE_PLANNER"
 
         if not state["research_results"] and state["step_count"] >= MAX_STEPS - 1:
             print("路由函数：警告：接近最大步骤限制且无研究结果，强制路由到FAIL。")
             return "FAIL"
 
-        if state["final_answer"] and not state.get("replan_needed"):
-            print("路由函数：检测到最终答案且无需重新规划，路由到FINISH。")
+        if state["final_answer"] and supervisor_decision == "FINISH":
+            print("路由函数：检测到最终答案且决策为FINISH，任务结束。")
             return "FINISH"
 
-        if supervisor_decision == "PLANNER":
-            return "PLANNER"
-        elif supervisor_decision == "EXECUTOR":
-            return "EXECUTOR"
-        elif supervisor_decision == "EVALUATOR":
-            return "EVALUATOR"
-        elif supervisor_decision == "WRITER":
-            return "WRITER"
-        elif supervisor_decision == "REVIEWER":
-            return "REVIEWER"
-        elif supervisor_decision == "SYNTHESIZER":
-            return "SYNTHESIZER"
-        elif supervisor_decision == "FINISH":
-            return "FINISH"
-        elif supervisor_decision == "FAIL":
-            return "FAIL"
+        if supervisor_decision in ["OUTLINE_PLANNER", "WRITER_PLANNER", "EXECUTOR", "EVALUATOR", "WRITER", "REVIEWER", "SYNTHESIZER", "FINISH", "FAIL"]:
+            return supervisor_decision
         else:
-            print(f"路由函数：主管决策 '{supervisor_decision}' 不明确，默认为PLANNER。")
-            return "PLANNER"
+            print(f"路由函数：主管决策 '{supervisor_decision}' 不明确，默认为OUTLINE_PLANNER。")
+            return "OUTLINE_PLANNER"
 
     def get_app(self):
         """
@@ -579,7 +588,7 @@ if __name__ == "__main__":
         "step_count": 0,
         "consecutive_no_progress_count": 0,
         "planning_attempts_count": 0
-    }):
+    }, {"recursion_limit": 100}):
         if "__end__" not in s:
             print(s)
         else:
