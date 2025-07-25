@@ -25,8 +25,13 @@ pydantic
 requests
 beautifulsoup4
 google_search
+googlesearch-python
 
 # 异步和工具相关
 nest_asyncio
 aiohttp
 tiktoken
+
+
+dashscope
+llama-index-embeddings-langchain
