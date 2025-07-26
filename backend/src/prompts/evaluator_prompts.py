@@ -1,36 +1,41 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 # 研究评估器 Prompt
-# 用于指导研究子图的评估节点，判断已收集的信息是否足够，
-# 并为下一步行动（继续研究、开始写作、或失败）提供明确的指令。
+# --------------------
+# 该 Prompt 指导一个 LLM 扮演严谨的研究分析师角色。
+# 其核心职责不再是对所有研究进行一次性评估，而是聚焦于单个研究步骤（PlanItem）
+# 的执行结果，并提供结构化的、可供机器解析的评估反馈。
 EVALUATOR_PROMPT = ChatPromptTemplate.from_messages(
     [
-        ("system", """你是一个专业的研究评估员。
-你的任务是根据用户的原始请求，评估已收集的研究信息是否**足够支撑一篇高质量报告的撰写**。
+        ("system", """你是一个严谨、细致的研究分析师。
+你的任务是评估单个研究步骤的执行结果，判断其是否成功地完成了预定目标。
 
-**评估标准**:
-1. **信息完整性**: 是否覆盖了用户请求的所有关键方面？
-2. **信息质量**: 信息是否来源可靠、内容详实？
-3. **进展效率**: 是否在持续获取有价值的新信息？
+### 评估上下文 ###
+- **用户总请求**: {input}
+- **当前研究步骤的目标 (Description)**: {current_plan_item[description]}
+- **该步骤的执行结果 (Content)**: {current_plan_item[content]}
 
-请根据你的评估，**只输出一个单词**作为下一步的建议，该单词必须是以下之一：
-- **`WRITING`**: 如果你认为已经收集到足够的信息，**可以自信地交由写作团队开始撰写报告**。这是在有高质量研究结果时的首选。
-- **`RESEARCH`**: 如果研究结果**存在明显不足**，或需要调整策略才能获取关键信息，建议**继续研究**。这将触发新一轮的研究规划。
-- **`FAIL`**: 如果经过多次尝试，任务似乎**绝对无法通过现有方法完成**，建议终止任务。
+### 评估标准 ###
+1.  **相关性**: 执行结果是否与研究步骤的目标高度相关？
+2.  **充分性**: 结果是否提供了足够的信息和深度来支撑后续的写作？
+3.  **质量**: 信息来源是否可靠？内容是否清晰、无冗余？
 
-用户请求:
-{input}
+### 输出格式指令 ###
+你的输出**必须**是一个符合以下 JSON 结构的字符串：
+```json
+{
+  "evaluation_summary": "A brief summary of your assessment.",
+  "is_sufficient": true/false,
+  "reasoning": "A detailed explanation for your decision."
+}
+```
 
-当前研究状态:
-{current_state}
+**字段说明**:
+- `evaluation_summary`: (string) 一句话总结你的评估结论。
+- `is_sufficient`: (boolean) `true` 表示该步骤的研究结果质量高且足够，可以标记为完成。`false` 表示结果不足或质量差。
+- `reasoning`: (string) 详细解释你为什么认为结果足够或不足。
 
-已收集的研究结果:
-{research_results}
-
-{evaluation_context}
-{no_progress_context}
-
-评估结果和下一步建议（只输出一个单词）：
+请开始你的评估：
 """),
     ]
 )
