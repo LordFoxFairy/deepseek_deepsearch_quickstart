@@ -1,4 +1,5 @@
 import ast
+import time
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph, END
@@ -89,11 +90,18 @@ class SearchRagGraph:
                 logger.info(f"工具 'search_tool' 已成功执行，查询: '{step}'。")
 
                 state["research_results"].extend(output)
-                for res in output:
-                    if isinstance(res, dict) and 'snippet' in res:
-                        state["raw_research_content"] += res['snippet'] + "\n"
+                # for res in output:
+                #     if isinstance(res, dict) and 'snippet' in res:
+                #         state["raw_research_content"] += res['snippet'] + "\n"
 
                 llama_index_service.add_search_results_to_index(output)
+
+                # 在每次API调用后，暂停2秒。
+                # 这可以极大地降低因为请求过于频繁而被搜索引擎（如Google）暂时屏蔽的风险（429错误）。
+                logger.info("为避免请求过于频繁，暂停2秒...")
+                time.sleep(2)
+
+
 
             except Exception as e:
                 error_message = f"工具 'search_tool' 在查询 '{step}' 时执行失败：{e}"

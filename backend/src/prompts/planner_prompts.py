@@ -10,7 +10,6 @@ OUTLINE_PLANNER_PROMPT = ChatPromptTemplate.from_messages(
 
 可用的工具包括：
 - `search_tool`: 用于执行网络搜索，获取最新信息。
-- `rag_tool`: 用于从内部知识库中检索相关信息。
 
 当前研究状态:
 {current_state}

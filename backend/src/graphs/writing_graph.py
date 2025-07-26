@@ -1,7 +1,8 @@
 from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
-
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from backend.src.tools.rag_tools import rag_tool
 from backend.src.config.logging_config import get_logger
 from backend.src.llms.openai_llm import get_chat_model
 from backend.src.prompts.planner_prompts import WRITER_PLANNER_PROMPT
@@ -22,11 +23,26 @@ class WritingGraph:
     """
 
     def __init__(self):
+        # --- 初始化 Agent 执行器 ---
+        # 1. 定义 Agent 可以使用的工具列表。根据你的设计，这里只有 rag_tool。
+        tools = [rag_tool]
+        # 2. 使用 LangChain 的 `create_tool_calling_agent` 函数创建一个 Agent。
+        #    它将 LLM、工具列表和我们精心设计的 WRITER_PROMPT 绑定在一起。
+        writing_agent = create_tool_calling_agent(llm, tools, WRITER_PROMPT)
+        # 3. 将创建好的 Agent 包装成一个 AgentExecutor。
+        #    Executor 负责处理 Agent 的完整运行逻辑，包括调用 Agent、解析工具、执行工具、返回结果等。
+        self.agent_executor = AgentExecutor(
+            agent=writing_agent,
+            tools=tools,
+            verbose=True,  # 设置为 True 可以在控制台看到 Agent 的详细思考过程
+            handle_parsing_errors=True,  # 帮助处理一些潜在的解析错误
+        )
+
         self.graph = self._build_graph()
 
     def call_writer_planner(self, state: AgentState) -> dict:
         """
-        写作规划器节点。
+        写作规划器节点。(此节点保持不变)
         """
         logger.info("--- [进入 写作子图: writer_planner 节点] ---")
         response = llm.invoke(
@@ -46,25 +62,33 @@ class WritingGraph:
 
     def call_writer(self, state: AgentState) -> dict:
         """
-        作者节点。
+        作者节点 (Agentic 模式)。
         """
-        logger.info("--- [进入 写作子图: writer 节点] ---")
-        response = llm.invoke(
-            WRITER_PROMPT.format_messages(
-                input=state["input"],
-                plan=state["plan"],
-                raw_research_content=state["raw_research_content"],
-                research_results=state["research_results"]
-            )
-        )
-        generated_answer = response.content
-        logger.info("写作者完成报告起草。")
-        logger.info("--- [退出 写作子图: writer 节点] ---")
-        return {"final_answer": generated_answer}
+        logger.info("--- [进入 写作子图: writer 节点 (Agentic)] ---")
 
+        agent_inputs = {
+            "input": state["input"],
+            "plan": state["plan"],
+        }
+
+        # 调用 Agent 执行器。它会根据 WRITER_PROMPT 的指令，
+        # 自动决定何时以及如何调用 rag_tool 来获取信息，以完成写作任务。
+        agent_response = self.agent_executor.invoke(agent_inputs)
+
+        final_answer = agent_response["output"]
+        writer_steps = agent_response.get("intermediate_steps", [])
+
+        logger.info("写作者 Agent 完成报告起草。")
+        logger.info("--- [退出 写作子图: writer 节点] ---")
+
+        # 4. 将 Agent 的思考步骤返回，以便 LangGraph 将其添加到全局的 intermediate_steps 列表中。
+        return {
+            "final_answer": final_answer,
+            "intermediate_steps": writer_steps
+        }
     def call_reviewer(self, state: AgentState) -> dict:
         """
-        审阅者节点：对报告进行质量评估。
+        审阅者节点：对报告进行质量评估。(此节点保持不变)
         """
         logger.info("--- [进入 写作子图: reviewer 节点] ---")
         response = llm.invoke(
@@ -98,7 +122,7 @@ class WritingGraph:
 
     def route_writing_decision(self, state: AgentState) -> str:
         """
-        写作子图内部的条件路由，完全符合Mermaid子图流程。
+        写作子图内部的条件路由。(此节点保持不变)
         """
         logger.info("--- [写作子图 路由] ---")
         decision = state.get("supervisor_decision", "FAIL")
@@ -112,7 +136,7 @@ class WritingGraph:
 
     def _build_graph(self) -> CompiledStateGraph:
         """
-        构建包含“规划-写作-评审-修订”循环的自治写作子图。
+        构建包含“规划-写作-评审-修订”循环的自治写作子图。(此节点保持不变)
         """
         workflow = StateGraph(AgentState)
 
