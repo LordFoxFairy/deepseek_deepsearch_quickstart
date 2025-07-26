@@ -34,8 +34,6 @@ deep_search_graph = DeepSearchGraph()
 graph_app = deep_search_graph.get_app()
 
 # 内存中的会话存储
-# 注意：在生产环境中，应将其替换为持久化存储（如Redis或数据库），
-# 以确保会话状态在服务器重启或多实例部署时不会丢失。
 session_states: Dict[str, AgentState] = {}
 
 
@@ -104,9 +102,8 @@ async def chat_stream(request: Request) -> StreamingResponse:
 
         async def event_generator():
             """为前端生成服务器发送事件 (SSE)。"""
+            final_state = None
             try:
-                # 为图设置更高的递归限制，默认为25。
-                # 这允许代理有更多步骤来完成复杂任务。
                 config = {"recursion_limit": 50}
 
                 async for s in graph_app.astream(current_state, config=config):
@@ -115,75 +112,75 @@ async def chat_stream(request: Request) -> StreamingResponse:
                         step_output = s[step_name]
 
                         try:
+                            ### 修改点 1: 增强活动更新的解析逻辑 ###
                             activity_output_display = ""
-                            if isinstance(step_output, dict):
-                                if step_name == "executor" and "tool_output" in step_output:
-                                    tool_output_str = step_output["tool_output"]
-                                    formatted_tool_results = []
+                            # 为 supervisor 节点生成日志
+                            if step_name == "supervisor":
+                                decision = step_output.get("supervisor_decision", "决策中...")
+                                activity_output_display = f"主管决策: {decision}"
 
-                                    search_result_pattern = r"SearchResult\(title='([^']+?)', url='([^']+?)', snippet='([^']+?)'\)"
-                                    rag_result_pattern = r"RagResult\(content='([^']+?)', source='([^']+?)'\)"
+                            # 为 research_flow 子图生成更详细的日志
+                            elif step_name == "research_flow":
+                                eval_result = step_output.get("evaluation_results", "无")
+                                num_results = len(step_output.get("research_results", []))
+                                activity_output_display = (
+                                    f"研究流程完成。\n"
+                                    f"- 收集到 {num_results} 条结果。\n"
+                                    f"- 评估结果: {eval_result}"
+                                )
 
-                                    for sr_match in re.finditer(search_result_pattern, tool_output_str):
-                                        title = sr_match.group(1)
-                                        url = sr_match.group(2)
-                                        formatted_tool_results.append(f"- [{title}]({url})")
+                            # 为 writing_flow 子图生成更详细的日志
+                            elif step_name == "writing_flow":
+                                review_result = step_output.get("evaluation_results", "无")
+                                activity_output_display = f"写作流程完成。\n- 评审结果: {review_result}"
 
-                                    for rag_match in re.finditer(rag_result_pattern, tool_output_str):
-                                        content_snippet = rag_match.group(1)
-                                        source = rag_match.group(2)
-                                        formatted_tool_results.append(f"- [{content_snippet[:50]}...]({source})")
+                                ### 修改点 2: 引入实时内容更新事件 ###
+                                # 当写作流程结束时，报告初稿已生成，立即将其发送给前端。
+                                if 'final_answer' in step_output and step_output['final_answer']:
+                                    print("检测到写作流程已生成报告，向前端发送实时内容更新。")
+                                    yield f"event: chat_content_update\n"
+                                    yield f"data: {json.dumps({'content': step_output['final_answer']})}\n\n"
 
-                                    if formatted_tool_results:
-                                        activity_output_display = f"执行器完成步骤. 工具输出 ({len(formatted_tool_results)} 条结果):\n" + "\n".join(
-                                            formatted_tool_results)
-                                    elif "工具执行失败" in tool_output_str:
-                                        activity_output_display = tool_output_str
-                                    else:
-                                        activity_output_display = f"执行器完成步骤. 工具输出: {tool_output_str}"
-                                elif step_name == "planner" and "plan" in step_output:
-                                    activity_output_display = "计划: \n" + "\n".join(
-                                        [f"- {step}" for step in step_output["plan"]])
-                                elif step_name == "evaluator" and "evaluation_results" in step_output:
-                                    activity_output_display = "评估结果: " + step_output["evaluation_results"]
-                                elif step_name == "writer" and "final_answer" in step_output:
-                                    activity_output_display = "写作完成，等待评审。"
-                                    final_data = {
-                                        "answer": step_output['final_answer'],
-                                        "sources": []
-                                    }
-                                    yield f"event: final_response\n"
-                                    yield f"data: {json.dumps(final_data)}\n\n"
-                                elif step_name == "reviewer" and "evaluation_results" in step_output:
-                                    activity_output_display = "评审结果: " + step_output["evaluation_results"]
-                                elif step_name == "supervisor" and "supervisor_decision" in step_output:
-                                    activity_output_display = "主管决策: " + step_output["supervisor_decision"]
-                                    if step_output["supervisor_decision"] == "FAIL" and "final_answer" in step_output:
-                                        yield f"event: chat_content_update\n"
-                                        yield f"data: {json.dumps({'content': step_output['final_answer']})}\n\n"
-                                else:
-                                    activity_output_display = str(step_output)
                             else:
-                                activity_output_display = str(step_output)
+                                activity_output_display = f"进入未知节点: {step_name}"
 
                             yield f"event: activity_update\n"
                             yield f"data: {json.dumps({'step_name': step_name, 'output': activity_output_display})}\n\n"
-                        except TypeError as e:
-                            print(
-                                f"警告: 无法序列化步骤 {step_name} 的输出 ({e})。原始输出: {step_output}。跳过活动更新。")
+                        except Exception as e:
+                            print(f"警告: 解析步骤 {step_name} 的输出时出错 ({e})。")
 
                     else:
-                        # 流结束
-                        yield "event: message\ndata: [DONE]\n\n"
-                        return
+                        final_state = s["__end__"]
+                        break
+
+                # 在流程结束后，发送最终答案
+                if final_state:
+                    print("流程结束，正在向前端发送最终答案。")
+                    final_answer = final_state.get('final_answer', '代理未能生成最终答案。')
+
+                    sources = []  # 来源提取逻辑可在此处实现
+
+                    final_data = {
+                        "answer": final_answer,
+                        "sources": sources
+                    }
+                    yield f"event: final_response\n"
+                    yield f"data: {json.dumps(final_data)}\n\n"
 
             except Exception as e:
                 print(f"在事件生成期间发生API错误: {e}")
                 error_message_for_frontend = f"后端处理失败: {str(e)}"
-                yield "event: message\ndata: [DONE]\n\n"
                 yield f"event: final_response\n"
                 yield f"data: {json.dumps({'answer': error_message_for_frontend, 'sources': []})}\n\n"
-                return
+
+            finally:
+                # 保存更新后的会话状态
+                if final_state:
+                    session_states[session_id] = final_state
+                    print(f"已为会话 {session_id} 保存最终状态。")
+
+                # 发送流结束信号
+                yield "event: message\ndata: [DONE]\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
