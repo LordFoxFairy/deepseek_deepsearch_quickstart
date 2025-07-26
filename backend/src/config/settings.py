@@ -45,4 +45,3 @@ if __name__ == "__main__":
     print(f"  聊天模型: {settings.DEEPSEEK_CHAT_MODEL}")
     print(f"  聊天模型API基础URL: {settings.DEEPSEEK_BASE_URL}")
     print(f"  嵌入模型: {settings.DASH_SCOPE_EMBEDDING_MODEL}")
-

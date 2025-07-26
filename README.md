@@ -34,30 +34,58 @@
 
 代理的执行流程由一个主管（Supervisor）节点控制，该节点根据当前状态决定将任务路由到哪个子代理：
 
+1. 主图与子图交互流程图
+
 ```mermaid
 graph TD
-    A[用户请求] --> B(Supervisor);
-    B --> C{有计划吗？};
-    C -- 否 --> D[Planner: 制定计划];
-    D --> B;
-    C -- 是 --> E{计划执行完了吗？};
-    E -- 否 --> F[Executor: 执行工具];
-    F --> G[Evaluator: 评估结果];
-    G -- 结果不好 --> D;
-    G -- 结果够好 --> B;
-    E -- 是 --> H[Writer: 撰写报告];
-    H --> I[Reviewer: 评审报告];
-    I -- 不通过 --> D;
-    I -- 通过 --> J[FINISH: 生成最终答案];
-    J --> K[用户];
+    A[开始] --> B{Supervisor 决策};
+    B -- 需要研究? --> C["执行 SearchRagGraph (研究子图)"];
+    C -- 反馈 --> B;
+    B -- 可以写作? --> D["执行 WritingGraph (写作子图)"];
+    D -- 反馈 --> B;
+    B -- 任务完成? --> E[结束];
+    B -- 任务失败? --> E;
 
-    style F fill:#f9f,stroke:#333,stroke-width:2px;
-    style D fill:#ccf,stroke:#333,stroke-width:2px;
-    style G fill:#cfc,stroke:#333,stroke-width:2px;
-    style H fill:#ffc,stroke:#333,stroke-width:2px;
-    style I fill:#fca,stroke:#333,stroke-width:2px;
+    style C fill:#D6EAF8,stroke:#3498DB,stroke-width:2px
+    style D fill:#D5F5E3,stroke:#2ECC71,stroke-width:2px
 ```
 
+
+
+
+2. SearchRagGraph (搜索思考子图) 内部详细流程
+
+```mermaid
+graph TD
+    subgraph 搜索思考子图
+        A["规划研究 (outline_planner)"] --> B["执行搜索 (executor)"];
+        B --> C{"评估结果 (evaluator)"};
+        C -- "结果不足? 重新规划" --> A;
+        C -- "结果充足或失败?" --> D["结束子图 & 反馈主图"];
+    end
+
+    style A fill:#D6EAF8,stroke:#3498DB
+    style B fill:#D6EAF8,stroke:#3498DB
+    style C fill:#EBDEF0,stroke:#9B59B6
+    style D fill:#FDEDEC,stroke:#E74C3C
+```
+
+3. WritingGraph (写作思考子图) 内部详细流程
+
+```mermaid
+graph TD
+    subgraph 写作思考子图
+        A["规划大纲 (writer_planner)"] --> B["撰写报告 (writer)"];
+        B --> C{"评审报告 (reviewer)"};
+        C -- "报告需修改?" --> A;
+        C -- "报告合格或材料不足?" --> D["结束子图 & 反馈主图"];
+    end
+
+    style A fill:#D5F5E3,stroke:#2ECC71
+    style B fill:#D5F5E3,stroke:#2ECC71
+    style C fill:#EBDEF0,stroke:#9B59B6
+    style D fill:#FDEDEC,stroke:#E74C3C
+```
 ## 🛠️ 技术栈
 
 |              | **技术**                                                     |

@@ -106,7 +106,24 @@ function App() {
               } catch (e) {
                 console.error("解析活动数据失败:", e, "原始数据:", eventData);
               }
-            } else if (eventType === 'final_response' && eventData) {
+            }
+            // 这个事件用于在最终答案确认前，实时更新AI的聊天气泡内容。
+            else if (eventType === 'chat_content_update' && eventData) {
+              try {
+                const updateData = JSON.parse(eventData);
+                const newContent = updateData.content;
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === newAiMessageId
+                      ? { ...msg, content: newContent }
+                      : msg
+                  )
+                );
+              } catch (e) {
+                console.error("解析内容更新失败:", e, "原始数据:", eventData);
+              }
+            }
+            else if (eventType === 'final_response' && eventData) {
               try {
                 const finalData = JSON.parse(eventData);
                 const finalAnswer = finalData.answer;
