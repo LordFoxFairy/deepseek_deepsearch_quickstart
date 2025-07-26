@@ -186,8 +186,7 @@ deepseek_deepsearch_quickstart/
 │   │   │   └── main.py           # FastAPI 应用主入口
 │   │   ├── config/
 │   │   │   └── settings.py       # Pydantic 配置管理
-│   │   ├── graphs/
-│   │   │   └── deepsearch_graph.py # LangGraph 核心逻辑
+│   │   ├── graphs/               # agent 编排
 │   │   ├── llms/
 │   │   │   └── openai_llm.py     # LLM 模型加载
 │   │   ├── prompts/              # 存放所有 Prompt
