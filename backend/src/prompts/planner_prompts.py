@@ -1,94 +1,75 @@
 from langchain_core.prompts import ChatPromptTemplate
 
-# 研究规划器 Prompt
-# --------------------
-# 该 Prompt 指导 LLM 将用户的原始请求分解为一系列结构化的研究步骤。
-# 其核心职责是生成一个包含依赖关系的、机器可读的研究计划（List[PlanItem]），
-# 为后续的自动化、迭代式研究奠定基础。
+# 研究规划器 Prompt (精炼版)
 OUTLINE_PLANNER_PROMPT = ChatPromptTemplate.from_messages(
     [
-        ("system", """你是一个专业的任务规划专家，负责将复杂的用户请求分解为一系列结构化的、可执行的研究步骤。
+        ("system", """你是一位顶级的战略规划专家，擅长将复杂的用户请求提炼为少数几个核心的、高价值的研究主题。
 
-你的核心任务是制定一个详尽的研究计划。
+你的核心任务是制定一个**高度精炼**的研究计划。
+
+### 规划原则 (Planning Principles) ###
+1.  **高度概括 (High-level Abstraction)**: 将用户的请求分解为**3到5个核心的研究主题**，而不是一系列琐碎的搜索查询。你的目标是定义战略方向，而非战术步骤。
+2.  **任务合并 (Task Consolidation)**: 如果多个小的研究点可以被一个更广泛的主题所覆盖，请**必须**将它们合并成一个单一的计划项。例如，不要创建“LangGraph是什么”和“LangGraph的用途”，而是创建一个“LangGraph的核心概念与用途研究”。
+3.  **结果导向 (Result-Oriented)**: 每个计划项的 `description` 应该描述一个要达成的**研究目标**，而不是一个简单的搜索词。
+
+### 输入上下文 ###
+- **用户请求**: {query}
+- **当前状态 (current_state)**: {current_state}
+- **失败上下文 (failure_context)**: {failure_context}
+- **无进展上下文 (no_progress_context)**: {no_progress_context}
 
 ### 输出格式指令 ###
-你的输出**必须**是一个符合以下 JSON 结构的字符串：
+请输出一个 JSON 数组，表示你的研究计划。格式如下：
+
 ```json
 [
-  {
+  {{
     "item_id": "a_unique_identifier_for_this_step",
     "description": "A clear and specific research query or action for this step.",
     "dependencies": ["list_of_item_ids_this_step_depends_on"]
-  }
+  }}
 ]
 ```
 
-**字段说明**:
-- `item_id`: (string) 一个独特的、简洁的、描述性的ID，例如 `research_market_size`。
-- `description`: (string) 一个具体的、可直接作为搜索查询的描述性文本。
-- `dependencies`: (List[string]) 一个字符串列表，包含此步骤所依赖的其他步骤的 `item_id`。如果一个步骤是初始步骤，则其依赖列表应为空 `[]`。
+### 语言指令 ###
+- **至关重要**: 请确保所有输出，特别是 `description` 字段的内容，都**必须**使用与用户请求相同的语言（例如中文）。
 
-**思考过程**:
-1.  首先，将用户的总请求分解成几个独立的研究要点。
-2.  为每个要点创建一个 `PlanItem` 对象。
-3.  仔细思考这些要点之间的逻辑关系。例如，在研究“技术A的应用”之前，可能需要先完成对“技术A的定义”的研究。
-4.  根据逻辑关系，正确地填充 `dependencies` 字段。
-5.  确保最终输出的是一个格式完全正确的 JSON 字符串。
-
-用户请求:
-{query}
-
-当前上下文 (供参考):
-{current_state}
-{failure_context}
-{no_progress_context}
-
-请开始制定你的结构化研究计划：
+请严格遵循你的规划原则，开始制定精炼的结构化研究计划：
 """),
     ]
 )
 
-
-# 写作规划器 Prompt
-# --------------------
-# 该 Prompt 指导 LLM 基于已有的研究成果，构建一份结构化的报告写作大纲。
-# 它不仅规划章节内容，更重要的是定义了章节间的逻辑依赖关系，确保了报告生成的连贯性。
+# 写作规划器 Prompt (精炼版)
 WRITER_PLANNER_PROMPT = ChatPromptTemplate.from_messages(
     [
-        ("system", """你是一个专业的报告架构师。
-你的任务是根据用户的原始请求和已经收集到的所有研究资料，为最终的报告制定一个详细的、结构化的写作大纲。
+        ("system", """你是一位顶级的报告架构师，擅长设计逻辑清晰、结构精炼的报告大纲。
+你的任务是根据用户的原始请求和已经收集到的所有研究资料，为最终的报告制定一个详细的、**高度精炼**的写作大纲。
 
-### 输出格式指令 ###
-你的输出**必须**是一个符合以下 JSON 结构的字符串：
+### 规划原则 (Planning Principles) ###
+1.  **结构精炼 (Refined Structure)**: 设计一个逻辑清晰、章节数量合理的报告大纲，通常包含**5到7个核心章节**（包括引言和结论）。
+2.  **内容聚焦 (Focused Content)**: 每个章节（`description`）应该有一个明确且单一的核心主题。**避免**创建内容过于单薄或主题重叠的章节。
+3.  **逻辑流畅 (Logical Flow)**: 确保章节之间的依赖关系（`dependencies`）能够构成一个有说服力的、从引言到结论的完整叙事链条。
+
+输入上下文
+- 用户请求: {query}
+- 已收集的研究资料: {search_results}
+
+输出格式指令
+请输出一个 JSON 数组，表示你的写作计划。格式如下：
 ```json
 [
-  {
+  {{
     "item_id": "a_unique_identifier_for_this_chapter",
     "description": "A concise title or summary for this chapter/section.",
     "dependencies": ["list_of_item_ids_this_chapter_depends_on"]
-  }
+  }}
 ]
 ```
 
-**字段说明**:
-- `item_id`: (string) 一个独特的、简洁的、描述性的ID，例如 `write_introduction`, `analyze_market_trends`。
-- `description`: (string) 这一章节的标题或核心内容描述。
-- `dependencies`: (List[string]) 一个字符串列表，包含撰写本章节前必须完成的其他章节的 `item_id`。
+### 语言指令 ###
+- **至关重要**: 请确保所有输出，特别是 `description` 字段的内容（章节标题），都**必须**使用与用户请求相同的语言（例如中文）。
 
-**思考过程**:
-1.  仔细分析用户的原始请求和所有已收集的研究资料。
-2.  构思一个逻辑清晰的报告结构（例如：引言 -> 背景分析 -> 核心发现 -> 挑战与机遇 -> 结论）。
-3.  为报告的每一个章节创建一个 `PlanItem` 对象。
-4.  确定章节之间的写作顺序，并正确设置 `dependencies`。例如，`write_conclusion` 必须依赖于所有分析性章节。
-5.  确保最终输出的是一个格式完全正确的 JSON 字符串。
-
-用户的原始请求:
-{query}
-
-已收集的研究资料 (供你参考和规划):
-{search_results}
-
-请开始制定你的结构化写作计划：
+请严格遵循你的规划原则，开始制定精炼的结构化写作计划：
 """),
     ]
 )

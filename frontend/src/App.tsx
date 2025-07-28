@@ -48,7 +48,7 @@ function App() {
 
     const newAiMessageId = uuidv4();
     setCurrentAiMessageId(newAiMessageId);
-    const newAiMessage: Message = { id: newAiMessageId, sender: "ai", content: "思考中...", sources: [] };
+    const newAiMessage: Message = { id: newAiMessageId, sender: "ai", content: "", sources: [] };
     setMessages((prevMessages) => [...prevMessages, newAiMessage]);
 
     try {
@@ -102,20 +102,20 @@ function App() {
                   output: activityData.output,
                   timestamp: new Date().toLocaleTimeString(),
                 };
-                setActivityLogs((prevLogs) => [...prevLogs, newActivity]);
+                setActivityLogs((prevLogs) => [newActivity, ...prevLogs]);
               } catch (e) {
                 console.error("解析活动数据失败:", e, "原始数据:", eventData);
               }
             }
-            // 这个事件用于在最终答案确认前，实时更新AI的聊天气泡内容。
             else if (eventType === 'chat_content_update' && eventData) {
               try {
                 const updateData = JSON.parse(eventData);
-                const newContent = updateData.content;
+                const contentChunk = updateData.content;
                 setMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === newAiMessageId
-                      ? { ...msg, content: newContent }
+                      // 将新内容块追加到现有内容后面，而不是覆盖
+                      ? { ...msg, content: msg.content + contentChunk }
                       : msg
                   )
                 );
@@ -132,11 +132,12 @@ function App() {
                 setMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === newAiMessageId
+                      // 最终响应会替换掉流式拼接的内容，以确保是最终、最干净的版本
                       ? { ...msg, content: finalAnswer, sources: finalSources }
                       : msg
                   )
                 );
-                setIsLoading(false); // 收到最终答案，停止加载
+                setIsLoading(false);
               } catch (e) {
                 console.error("解析最终响应失败:", e, "原始数据:", eventData);
                 setMessages((prev) =>

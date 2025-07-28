@@ -1,196 +1,193 @@
 import json
-import re
 import uuid
-from typing import Dict
+from typing import Dict, Any, AsyncGenerator
 
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 
+from backend.src.config.logging_config import get_logger
 from backend.src.config.settings import settings
 from backend.src.graphs.deepsearch_graph import DeepSearchGraph
 from backend.src.schemas.graph_state import AgentState
 
-# 初始化FastAPI应用
+logger = get_logger(__name__)
+
+# --- 初始化 ---
 app = FastAPI(
     title=settings.APP_NAME,
-    version="0.1.0",
-    description="DeepSearch Quickstart Backend API",
+    version="1.0.0",
+    description="DeepSearch Advanced Agent Backend API",
 )
 
-# 配置CORS (跨域资源共享) 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS if hasattr(settings, 'CORS_ORIGINS') else ["http://localhost:5173",
-                                                                                   "http://127.0.0.1:5173"],
+    allow_origins=settings.CORS_ORIGINS if hasattr(settings, 'CORS_ORIGINS') else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 初始化DeepSearchGraph代理
 deep_search_graph = DeepSearchGraph()
 graph_app = deep_search_graph.get_app()
-
-# 内存中的会话存储
 session_states: Dict[str, AgentState] = {}
 
 
+# --- 辅助函数 ---
+def _create_initial_state(user_message: str) -> AgentState:
+    """为新会话创建一个符合新架构的初始 AgentState。"""
+    return {
+        "input": user_message, "chat_history": [HumanMessage(content=user_message)],
+        "research_plan": [], "writing_plan": [], "shared_context": {},
+        "research_results": [], "final_answer": "", "final_sources": [],
+        "completed_chapters_count": 0,  # 初始化章节计数器
+        "current_plan_item_id": None, "supervisor_decision": "",
+        "intermediate_steps": [], "step_count": 0, "error_log": []
+    }
+
+
+def _generate_log_from_step(step_output: Dict[str, Any], current_task_id: str | None) -> Dict[str, Any] | None:
+    """从 LangGraph 的流式输出中解析并生成对前端友好的日志。"""
+    if not isinstance(step_output, dict) or not step_output: return None
+    step_name = list(step_output.keys())[0]
+    output = step_output[step_name]
+    if not isinstance(output, dict): return None
+
+    log_entry = {"step_name": step_name, "output": ""}
+    if step_name == "supervisor":
+        decision = output.get("supervisor_decision")
+        target_id = output.get("current_plan_item_id")
+        log_entry["step_name"] = "总指挥"
+        log_entry[
+            "output"] = f"决策：执行 '{decision}'，目标任务：'{target_id}'" if target_id else f"决策：下一步行动 '{decision}'"
+        return {"log": log_entry}
+
+    if "research_plan" in output or "writing_plan" in output:
+        plan_name = "research_plan" if "research_plan" in output else "writing_plan"
+        plan = output.get(plan_name, [])
+        item_id = current_task_id
+        current_item = next((item for item in plan if item["item_id"] == item_id), None)
+        if not current_item:
+            if plan and any(item.get('status') == 'pending' for item in plan):
+                plan_type = "研究" if plan_name == "research_plan" else "写作"
+                log_entry["step_name"] = "规划师"
+                log_entry["output"] = f"{plan_type}计划已生成，包含 {len(plan)} 个步骤。"
+                return {"log": log_entry}
+            return None
+
+        status = current_item.get("status")
+        description = current_item.get("description")
+        if status == "completed":
+            log_entry["step_name"] = "评估员" if plan_name == "research_plan" else "总结员"
+            log_entry["output"] = f"任务 '{item_id}' 已完成。\n- 描述: {description}"
+            return {"log": log_entry}
+
+        elif status == "in_progress":
+            log_entry["step_name"] = "研究员" if plan_name == "research_plan" else "写手"
+            log_entry["output"] = f"开始执行任务 '{item_id}'...\n- 描述: {description}"
+            return {"log": log_entry}
+    return None
+
+
+async def _stream_completed_chapter_content(state: AgentState, step_output) -> AsyncGenerator[str, None]:
+    """
+    检查是否有新完成的章节，并生成用于流式传输的事件字符串。
+    这是一个独立的、可重构的函数，专门负责发送写作内容。
+    """
+    step_name = list(step_output.keys())[0]
+    writing_plan = step_output[step_name]
+    chapters_sent_count = state.get("completed_chapters_count", 0)
+
+    if len(writing_plan) > chapters_sent_count:
+        newly_completed_chapter = writing_plan[chapters_sent_count]
+
+        logger.info(
+            f"--> [SENDING CHAPTER TO FRONTEND]: 检测到新完成的章节 '{newly_completed_chapter['item_id']}'，准备发送...")
+
+        separator = "" if chapters_sent_count == 0 else "\n\n---\n\n"
+        content_to_send = separator + newly_completed_chapter.get("content", "")
+
+        chapter_payload = json.dumps({'content': content_to_send}, ensure_ascii=False)
+        yield f"event: chat_content_update\ndata: {chapter_payload}\n\n"
+
+        # 更新状态，表示我们已经发送了这一章
+        state["completed_chapters_count"] += 1
+
+
+# --- API 端点 ---
 @app.get("/")
 async def read_root():
-    """根路由，用于检查API是否正常运行。"""
-    return {"message": "DeepSearch API 运行中！"}
+    return {"message": "DeepSearch Advanced API is running!"}
 
 
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: Request) -> StreamingResponse:
-    """
-    处理聊天请求并以流式方式返回代理的响应。
-    """
+    """处理聊天请求，并以 Server-Sent Events (SSE) 的方式流式返回代理的完整思考过程和最终结果。"""
     try:
         data = await request.json()
         user_message = data.get("message")
-        session_id = data.get("session_id")
-
+        session_id = data.get("session_id", str(uuid.uuid4()))
         if not user_message:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="消息内容不能为空。")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message content cannot be empty.")
+        current_state = _create_initial_state(user_message)
 
-        if not session_id:
-            session_id = str(uuid.uuid4())
-            print(f"生成新的会话ID: {session_id}")
-
-        # 检索或初始化会话的代理状态
-        current_state = session_states.get(session_id)
-        if not current_state:
-            current_state: AgentState = {
-                "input": user_message,
-                "chat_history": [HumanMessage(content=user_message)],
-                "plan": [],
-                "current_step": None,
-                "planning_attempts_count": 0,
-                "tool_calls": [],
-                "tool_output": None,
-                "intermediate_steps": [],
-                "research_results": [],
-                "raw_research_content": "",
-                "final_answer": None,
-                "evaluation_results": None,
-                "replan_needed": False,
-                "supervisor_decision": None,
-                "step_count": 0,
-                "consecutive_no_progress_count": 0
-            }
-            print(f"为会话 {session_id} 初始化新状态。")
-        else:
-            # 为现有会话中的新消息更新状态
-            current_state["input"] = user_message
-            current_state["chat_history"].append(HumanMessage(content=user_message))
-            # 重置与新查询相关的字段
-            current_state["plan"] = []
-            current_state["current_step"] = None
-            current_state["planning_attempts_count"] = 0
-            current_state["tool_calls"] = []
-            current_state["tool_output"] = None
-            current_state["evaluation_results"] = None
-            current_state["replan_needed"] = False
-            current_state["supervisor_decision"] = None
-            current_state["step_count"] = 0
-            current_state["consecutive_no_progress_count"] = 0
-
-            print(f"更新会话 {session_id} 的状态。")
-
-        async def event_generator():
-            """为前端生成服务器发送事件 (SSE)。"""
+        async def event_generator() -> AsyncGenerator[str, None]:
             final_state = None
+            current_task_id_for_logging = None
+
             try:
-                config = {"recursion_limit": 50}
+                config = {"recursion_limit": 100}
+                async for event in graph_app.astream_events(current_state, config=config, version="v2"):
+                    kind = event["event"]
+                    event_name = event['name']
 
-                async for s in graph_app.astream(current_state, config=config):
-                    if "__end__" not in s:
-                        step_name = list(s.keys())[0]
-                        step_output = s[step_name]
+                    if kind == "on_chain_stream":
+                        chunk = event["data"]["chunk"]
 
-                        try:
-                            ### 修改点 1: 增强活动更新的解析逻辑 ###
-                            activity_output_display = ""
-                            # 为 supervisor 节点生成日志
-                            if step_name == "supervisor":
-                                decision = step_output.get("supervisor_decision", "决策中...")
-                                activity_output_display = f"主管决策: {decision}"
+                        if event_name == "chapter_summarizer":
+                            current_full_state = session_states.get(session_id, current_state)
+                            async for chapter_event in _stream_completed_chapter_content(current_full_state, chunk):
+                                yield chapter_event
+                            session_states[session_id] = current_full_state  # 保存更新后的计数器
 
-                            # 为 research_flow 子图生成更详细的日志
-                            elif step_name == "research_flow":
-                                eval_result = step_output.get("evaluation_results", "无")
-                                num_results = len(step_output.get("research_results", []))
-                                activity_output_display = (
-                                    f"研究流程完成。\n"
-                                    f"- 收集到 {num_results} 条结果。\n"
-                                    f"- 评估结果: {eval_result}"
-                                )
+                        if "supervisor" in chunk:
+                            if "current_plan_item_id" in chunk["supervisor"]:
+                                current_task_id_for_logging = chunk["supervisor"]["current_plan_item_id"]
 
-                            # 为 writing_flow 子图生成更详细的日志
-                            elif step_name == "writing_flow":
-                                review_result = step_output.get("evaluation_results", "无")
-                                activity_output_display = f"写作流程完成。\n- 评审结果: {review_result}"
+                        parsed_data = _generate_log_from_step(chunk, current_task_id_for_logging)
+                        if parsed_data and parsed_data.get("log"):
+                            yield f"event: activity_update\ndata: {json.dumps(parsed_data['log'], ensure_ascii=False)}\n\n"
 
-                                ### 修改点 2: 引入实时内容更新事件 ###
-                                # 当写作流程结束时，报告初稿已生成，立即将其发送给前端。
-                                if 'final_answer' in step_output and step_output['final_answer']:
-                                    print("检测到写作流程已生成报告，向前端发送实时内容更新。")
-                                    yield f"event: chat_content_update\n"
-                                    yield f"data: {json.dumps({'content': step_output['final_answer']})}\n\n"
+                    elif kind == "on_chain_end":
+                        if event["name"] == "DeepSearchGraph":
+                            final_state = event["data"]["output"]
+                            session_states[session_id] = final_state
 
-                            else:
-                                activity_output_display = f"进入未知节点: {step_name}"
-
-                            yield f"event: activity_update\n"
-                            yield f"data: {json.dumps({'step_name': step_name, 'output': activity_output_display})}\n\n"
-                        except Exception as e:
-                            print(f"警告: 解析步骤 {step_name} 的输出时出错 ({e})。")
-
-                    else:
-                        final_state = s["__end__"]
-                        break
-
-                # 在流程结束后，发送最终答案
-                if final_state:
-                    print("流程结束，正在向前端发送最终答案。")
+                if final_state and final_state.get('final_answer'):
                     final_answer = final_state.get('final_answer', '代理未能生成最终答案。')
-
-                    sources = []  # 来源提取逻辑可在此处实现
-
-                    final_data = {
-                        "answer": final_answer,
-                        "sources": sources
-                    }
-                    yield f"event: final_response\n"
-                    yield f"data: {json.dumps(final_data)}\n\n"
+                    sources_data = final_state.get('final_sources', [])
+                    formatted_sources = [f"[{s['number']}] {s['title']}: {s['url']}" for s in sources_data]
+                    final_data = {"answer": final_answer, "sources": formatted_sources}
+                    yield f"event: final_response\ndata: {json.dumps(final_data, ensure_ascii=False)}\n\n"
 
             except Exception as e:
-                print(f"在事件生成期间发生API错误: {e}")
-                error_message_for_frontend = f"后端处理失败: {str(e)}"
-                yield f"event: final_response\n"
-                yield f"data: {json.dumps({'answer': error_message_for_frontend, 'sources': []})}\n\n"
-
+                logger.error(f"在事件生成期间发生API错误: {e}", exc_info=True)
+                error_message = f"后端处理失败: {str(e)}"
+                yield f"event: final_response\ndata: {json.dumps({'answer': error_message, 'sources': []}, ensure_ascii=False)}\n\n"
             finally:
-                # 保存更新后的会话状态
                 if final_state:
                     session_states[session_id] = final_state
-                    print(f"已为会话 {session_id} 保存最终状态。")
-
-                # 发送流结束信号
                 yield "event: message\ndata: [DONE]\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     except Exception as e:
-        print(f"在chat_stream处理程序中发生API错误: {e}")
+        logger.error(f"在 chat_stream 处理程序中发生API错误: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    print("Starting FastAPI application...")
     uvicorn.run(app, host="0.0.0.0", port=8000)
