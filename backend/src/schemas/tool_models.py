@@ -20,6 +20,7 @@ class SearchResult(BaseModel):
     title: str = Field(..., description="搜索结果的标题。")
     url: str = Field(..., description="搜索结果的 URL。")
     snippet: str = Field(..., description="搜索结果的摘要。")
+    content: str = Field(None, description="搜索结果的内容。")
 
 
 # RAG（检索增强生成）工具的输入模型

@@ -1,4 +1,5 @@
 from typing import List
+
 from googlesearch import search, SearchResult as GoogleSearchResult
 
 from backend.src.schemas.tool_models import SearchResult

@@ -1,120 +1,119 @@
-from typing import List, TypedDict, Annotated, Union, Optional
+import operator
+from typing import TypedDict, Annotated, List, Literal, Optional, Dict, Any
+
 from langchain_core.messages import BaseMessage
-from langgraph.graph.message import add_messages
+
+
+class PlanItem(TypedDict):
+    """
+    定义了统一计划中单个任务项（Plan Item）的完整状态。
+    """
+    # --- 核心标识与依赖 ---
+    item_id: str
+    """该计划项的唯一标识符。"""
+
+    task_type: Literal["RESEARCH", "WRITING"]
+    """
+    明确该任务是“研究”类型还是“写作”类型。
+    这是 supervisor 节点进行任务分派的核心依据。
+    """
+
+    description: str
+    """对该计划项目标的简要描述。"""
+
+    dependencies: List[str]
+    """
+    该计划项依赖的其他 PlanItem 的 item_id 列表。
+    一个计划项只有在其所有依赖项都'completed'后才能开始。
+    """
+
+    # --- 核心状态 ---
+    status: Literal["pending", "ready", "in_progress", "completed", "failed"]
+    """
+    该计划项的当前状态。
+    - pending: 存在未完成的依赖项。
+    - ready: 所有依赖项已完成，可以开始执行。
+    - in_progress: 正在处理。
+    - completed: 已成功完成。
+    - failed: 任务执行失败。
+    """
+
+    # --- 内容与执行 ---
+    content: str
+    """
+    该计划项生成的主要内容。
+    - 对于 RESEARCH 任务: 存储的是研究到的原始资料或摘要。
+    - 对于 WRITING 任务: 存储的是最终写好的章节内容。
+    """
+
+    summary: Optional[str]
+    """对该计划项'content'的简明摘要（如果适用）。"""
+
+    execution_log: Annotated[List[str], operator.add]
+    """记录执行此计划项时的关键步骤、决策和操作日志。"""
+
+    evaluation_results: Optional[str]
+    """对该计划项当前内容的评估反馈（如果适用）。"""
+
+    attempt_count: int
+    """为完成此计划项已进行的尝试次数。"""
 
 
 class AgentState(TypedDict):
     """
-    定义了LangGraph代理的当前状态。
-    它包含了代理在执行任务过程中所需的所有信息，以支持多步骤的规划、执行和评估。
+    高级智能体状态管理 TypedDict。
+    采用统一计划，由主图集中控制，流程更清晰、高效。
     """
-    # --- 核心输入与历史 ---
     input: str
-    """用户的原始输入查询。"""
+    """用户的原始输入。"""
 
-    chat_history: Annotated[List[BaseMessage], add_messages]
-    """聊天历史记录，新的消息会被自动追加到列表中。"""
+    chat_history: list[BaseMessage]
+    """完整的对话历史。"""
 
-    # --- 规划相关字段 ---
-    plan: List[str]
-    """代理为完成任务而制定的步骤列表。"""
+    # --- 统一规划与大纲 ---
+    overall_outline: Optional[str]
+    """
+    由总规划器生成的报告总大纲，用于在写作过程中保持方向一致。
+    """
 
-    current_step: Optional[str]
-    """当前正在执行的计划步骤。"""
+    plan: List[PlanItem]
+    """
+    统一的研究与写作计划。由总规划器生成，由主图的 supervisor 节点调度执行。
+    """
 
-    planning_attempts_count: int
-    """针对当前查询已经进行的规划尝试次数。"""
+    # --- 最终结果 ---
+    final_answer: str
+    """由最终的“整合”节点生成的完整报告。"""
 
-    # --- 工具调用与执行相关字段 ---
-    tool_calls: List[dict]
-    """由LLM生成的、代理决定调用的工具列表。"""
+    final_sources: List[Dict[str, Any]]
+    """
+    一个结构化的列表，用于存储最终报告的所有唯一引用来源。
+    示例: [{'number': 1, 'title': 'LangGraph介绍', 'url': 'https://...'}]
+    """
 
-    tool_output: Union[str, None]
-    """工具执行后返回的原始输出。"""
+    # --- 运行时状态与日志 ---
+    current_plan_item_id: Optional[str]
+    """当前正在处理的 PlanItem 的 ID。"""
 
-    intermediate_steps: Annotated[List[BaseMessage], add_messages]
-    """代理的中间思考和工具执行日志，用于追踪过程。"""
-
-    # --- 研究结果相关字段 ---
-    research_results: List[dict]
-    """存储由研究工具（如搜索、RAG）返回的结构化结果。"""
-
-    raw_research_content: str
-    """存储所有原始研究内容的纯文本汇总，供后续综合使用。"""
-
-    # --- 答案与评估相关字段 ---
-    final_answer: Union[str, None]
-    """代理综合所有信息后生成的最终答案。"""
-
-    evaluation_results: Union[str, None]
-    """对最终答案或中间结果的评估反馈。"""
-
-    replan_needed: bool
-    """一个布尔标志，指示当前是否需要重新规划或进行进一步的研究。"""
-
-    # --- 流程控制字段 ---
-    supervisor_decision: Optional[str]
-    """主管代理的决策，用于指示流程应转向哪个节点。"""
+    supervisor_decision: str
+    """主管代理的宏观决策，如 'RESEARCH', 'WRITING', 'PLAN' 等。"""
 
     step_count: int
-    """当前任务已执行的总步骤数，用于防止无限循环。"""
+    """当前执行的总步数，用于防止无限循环。"""
 
-    consecutive_no_progress_count: int
-    """代理连续未能取得有效研究进展的步骤次数。"""
-
-
-from typing import List, TypedDict, Optional, Literal
-
-
-class PlanItemState(TypedDict):
+    error_log: Annotated[List[Dict[str, Any]], operator.add]
     """
-    定义了任务计划中单个计划项（Plan Item）的完整状态。
-    每个计划项代表一个需要完成的子目标或步骤，拥有独立的状态、内容和决策逻辑。
-    这使得主流程可以动态地管理、评估和调整每个计划项。
+    结构化的错误日志列表。
+    例如: [{'node': 'research_executor', 'item_id': 'research_xyz', 'error': 'API rate limit exceeded'}]
     """
-    # --- 核心标识与描述 ---
-    item_id: str
-    """该计划项的唯一标识符，例如 'research_market_trends', 'write_introduction'。"""
 
-    description: str
-    """对该计划项目标的简要描述，例如 '收集并分析2025年AI芯片市场趋势'。"""
+    # --- 共享上下文（保留） ---
+    shared_context: Dict[str, Any]
+    """
+    一个全局共享的字典，主要用于管理引用。
+    - 'citations': 一个用于管理全局引用的字典。
+    - 'next_citation_number': 下一个可用的引用编号。
+    """
 
-    # --- 核心状态 (关键决策依据) ---
-    status: Literal["pending", "in_progress", "completed", "needs_research", "needs_revision", "blocked"]
-    """该计划项的当前状态。主流程依据此状态决定下一步动作。"""
-
-    # --- 内容与执行 ---
-    content: str
-    """该计划项当前生成的主要内容或结果。例如研究摘要、草稿段落等。"""
-
-    execution_log: List[str]
-    """记录执行此计划项时的关键步骤、决策和操作日志。"""
-
-    tool_calls: List[dict]
-    """为完成此计划项而调用的工具及其参数记录。"""
-
-    tool_output: Optional[str]
-    """最近一次工具调用的原始输出。"""
-
-    # --- 评估与反馈 ---
-    evaluation_results: Optional[str]
-    """对该计划项当前状态或内容的评估反馈，例如 '信息不充分，需补充最新数据'。"""
-
-    quality_score: Optional[float]  # 可选，如果需要量化评估
-    """一个0-1的分数，表示当前内容的质量或完成度。"""
-
-    # --- 流程控制与决策 ---
-    needs_research: bool
-    """是否需要执行研究（如搜索、RAG）来获取更多信息。"""
-
-    needs_revision: bool
-    """是否需要基于反馈对内容进行修改或优化。"""
-
-    requires_external_input: bool
-    """是否需要用户或其他外部代理的输入才能继续。"""
-
-    next_step_suggestion: Optional[str]
-    """建议的下一步操作，例如 '调用SearchTool', '提交给用户审核', '进入下一计划项'。"""
-
-    attempt_count: int
-    """为完成此计划项已进行的尝试次数，用于防止无限循环。"""
+    # 用于顺序执行的全局步骤索引
+    next_step_index: int

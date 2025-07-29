@@ -1,55 +1,112 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
 import InputForm from './features/chat/InputForm';
 import ChatMessagesView from './features/chat/ChatMessagesView';
 import ActivityTimeline from './components/ActivityTimeline';
 
+// 类型定义
 interface Message {
   id: string;
   sender: "user" | "ai";
   content: string;
-  sources?: string[];
+  sources?: any[];
+}
+
+interface ProgressInfo {
+  type: 'research' | 'writing';
+  current: number;
+  total: number;
+  description: string;
 }
 
 interface ActivityLog {
-  step_name: string;
-  output: string;
+  id: string;
+  message: string;
   timestamp: string;
+}
+
+interface TypingQueueItem {
+  type: 'chapter' | 'references';
+  content: string;
+  title?: string;
 }
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ProgressInfo | null>(null);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [currentAiMessageId, setCurrentAiMessageId] = useState<string | null>(null);
+  const [typingQueue, setTypingQueue] = useState<TypingQueueItem[]>([]);
 
+  // 使用useRef来避免闭包问题
+  const queueRef = useRef(typingQueue);
+  queueRef.current = typingQueue;
+
+  // 初始化会话ID
   useEffect(() => {
-    let currentSessionId = localStorage.getItem('deepsearch_session_id');
-    if (!currentSessionId) {
-      currentSessionId = uuidv4();
-      localStorage.setItem('deepsearch_session_id', currentSessionId);
-    }
-    setSessionId(currentSessionId);
+    let id = localStorage.getItem('deepsearch_session_id') || uuidv4();
+    localStorage.setItem('deepsearch_session_id', id);
+    setSessionId(id);
   }, []);
 
-  const handleSendMessage = async (userMessage: string) => {
-    if (!sessionId) {
-      console.error("会话ID未初始化。");
-      return;
+  // 处理打字机效果的useEffect
+  useEffect(() => {
+    if (isLoading || typingQueue.length === 0) {
+      return; // 如果不在加载或队列为空，则不执行
     }
 
+    const currentItem = typingQueue[0];
+    let fullContent = '';
+    if (currentItem.type === 'chapter' && currentItem.title) {
+      fullContent = `\n\n## ${currentItem.title}\n\n${currentItem.content}`;
+    } else {
+      fullContent = currentItem.content;
+    }
+
+    let charIndex = 0;
+    let timeoutId: NodeJS.Timeout;
+
+    const typeChar = () => {
+      if (charIndex < fullContent.length) {
+        // 为了性能，一次性追加多个字符
+        const nextChunk = fullContent.substring(charIndex, charIndex + 5);
+        setMessages(prev => prev.map(msg =>
+          msg.id === currentAiMessageId
+            ? { ...msg, content: msg.content + nextChunk }
+            : msg
+        ));
+        charIndex += nextChunk.length;
+        // 加快打字速度，这里保持原有的 5ms，如果需要可以进一步调整
+        timeoutId = setTimeout(typeChar, 5);
+      } else {
+        setTypingQueue(prev => prev.slice(1));
+      }
+    };
+
+    typeChar(); // 启动打字
+
+    return () => clearTimeout(timeoutId); // 清理函数
+  }, [typingQueue, isLoading, currentAiMessageId]);
+
+
+  const handleSendMessage = async (userMessage: string) => {
+    if (!sessionId) return;
+
     setIsLoading(true);
+    setProgress(null);
     setActivityLogs([]);
+    setTypingQueue([]);
 
     const newUserMessage: Message = { id: uuidv4(), sender: "user", content: userMessage };
-    setMessages((prevMessages) => [...prevMessages, newUserMessage]);
+    setMessages([newUserMessage]); // 开始新会话时，清空旧消息
 
     const newAiMessageId = uuidv4();
     setCurrentAiMessageId(newAiMessageId);
-    const newAiMessage: Message = { id: newAiMessageId, sender: "ai", content: "思考中...", sources: [] };
-    setMessages((prevMessages) => [...prevMessages, newAiMessage]);
+    const newAiMessage: Message = { id: newAiMessageId, sender: "ai", content: "", sources: [] };
+    setMessages(prev => [...prev, newAiMessage]);
 
     try {
       const response = await fetch('http://localhost:8000/api/v1/chat/stream', {
@@ -58,136 +115,94 @@ function App() {
         body: JSON.stringify({ message: userMessage, session_id: sessionId }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`API 错误: ${errorData.detail || response.statusText}`);
-      }
+      if (!response.ok) throw new Error(`API 错误: ${response.statusText}`);
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error("无法获取响应流阅读器。");
 
-      let buffer = "";
-      let currentEvent: { event?: string; data?: string } = {};
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let eventName = '';
+      let eventData = '';
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          setIsLoading(false);
-          break;
-        }
+        if (done) break;
 
-        buffer += new TextDecoder().decode(value);
+        buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || "";
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent.event = line.substring('event: '.length).trim();
-            currentEvent.data = '';
-          } else if (line.startsWith('data: ')) {
-            const dataContent = line.substring('data: '.length).trim();
-            if (dataContent === '[DONE]') {
-                setIsLoading(false);
-                break;
+          if (line.startsWith('event:')) {
+            eventName = line.substring('event:'.length).trim();
+          } else if (line.startsWith('data:')) {
+            eventData += line.substring('data:'.length).trim();
+          } else if (line === '' && eventName) {
+            if (eventData === '[DONE]') {
+              setIsLoading(false);
+              setProgress(null);
+              break;
             }
-            currentEvent.data = (currentEvent.data || '') + dataContent;
-          } else if (line === '' && currentEvent.event && currentEvent.data !== undefined) {
-            const { event: eventType, data: eventData } = currentEvent;
-
-            if (eventType === 'activity_update' && eventData) {
-              try {
-                const activityData = JSON.parse(eventData);
-                const newActivity: ActivityLog = {
-                  step_name: activityData.step_name,
-                  output: activityData.output,
-                  timestamp: new Date().toLocaleTimeString(),
-                };
-                setActivityLogs((prevLogs) => [...prevLogs, newActivity]);
-              } catch (e) {
-                console.error("解析活动数据失败:", e, "原始数据:", eventData);
+            try {
+              const jsonData = JSON.parse(eventData);
+              switch (eventName) {
+                case 'progress':
+                  const progressInfo = jsonData as ProgressInfo;
+                  setProgress(progressInfo);
+                  const progressMessage = `${progressInfo.type === 'research' ? '研究中' : '写作中'} (${progressInfo.current}/${progressInfo.total}): ${progressInfo.description}`;
+                  setActivityLogs(prev => [ { id: uuidv4(), message: progressMessage, timestamp: new Date().toLocaleTimeString() }, ...prev]);
+                  break;
+                case 'chapter':
+                  setTypingQueue(prev => [...prev, { type: 'chapter', title: jsonData.title, content: jsonData.content }]);
+                  break;
+                case 'references':
+                  setTypingQueue(prev => [...prev, { type: 'references', content: jsonData.content }]);
+                  break;
+                case 'sources':
+                  setMessages(prev => prev.map(msg => msg.id === newAiMessageId ? { ...msg, sources: jsonData.sources } : msg));
+                  break;
+                case 'error':
+                   setMessages(prev => prev.map(msg => msg.id === newAiMessageId ? { ...msg, content: `后端错误: ${jsonData.error}` } : msg));
+                   setIsLoading(false);
+                   setProgress(null);
+                   break;
               }
-            }
-            // 这个事件用于在最终答案确认前，实时更新AI的聊天气泡内容。
-            else if (eventType === 'chat_content_update' && eventData) {
-              try {
-                const updateData = JSON.parse(eventData);
-                const newContent = updateData.content;
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === newAiMessageId
-                      ? { ...msg, content: newContent }
-                      : msg
-                  )
-                );
-              } catch (e) {
-                console.error("解析内容更新失败:", e, "原始数据:", eventData);
-              }
-            }
-            else if (eventType === 'final_response' && eventData) {
-              try {
-                const finalData = JSON.parse(eventData);
-                const finalAnswer = finalData.answer;
-                const finalSources = finalData.sources || [];
-
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === newAiMessageId
-                      ? { ...msg, content: finalAnswer, sources: finalSources }
-                      : msg
-                  )
-                );
-                setIsLoading(false); // 收到最终答案，停止加载
-              } catch (e) {
-                console.error("解析最终响应失败:", e, "原始数据:", eventData);
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === newAiMessageId
-                      ? { ...msg, content: "解析最终响应失败。" }
-                      : msg
-                  )
-                );
-                setIsLoading(false);
-              }
-            }
-            currentEvent = {};
+            } catch (e) { console.error("解析SSE数据失败:", e, "原始数据:", eventData); }
+            eventName = '';
+            eventData = '';
           }
         }
       }
     } catch (error) {
-      const errorMessage = `错误: ${(error as Error).message}`;
-      console.error("发送消息失败:", error);
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === currentAiMessageId ? { ...msg, content: errorMessage } : msg
-        )
-      );
+       setMessages(prev => prev.map(msg => msg.id === currentAiMessageId ? { ...msg, content: `请求失败: ${(error as Error).message}` } : msg));
     } finally {
       setIsLoading(false);
+      setProgress(null);
     }
   };
 
   return (
+    // 整个应用容器，确保其高度为屏幕高度，并使用 flex 布局
     <div className="flex flex-col h-screen bg-gray-100">
       <header className="flex items-center justify-between p-4 bg-white shadow-md">
         <h1 className="text-xl font-bold text-gray-800">DeepSearch AI Assistant</h1>
-        {sessionId && (
-          <span className="text-sm text-gray-500">Session ID: {sessionId.substring(0, 8)}...</span>
-        )}
+        {sessionId && (<span className="text-sm text-gray-500">Session ID: {sessionId.substring(0, 8)}...</span>)}
       </header>
+      {/* 主内容区域，弹性填充可用空间并处理溢出 */}
       <main className="flex-1 flex overflow-hidden">
+        {/* 聊天消息视图区域 (ChatMessagesView) 弹性填充并处理溢出。
+            这个 div 的 flex-1 属性确保它会占据 main 标签内所有可用空间，
+            并将其内部的溢出内容隐藏，为 ChatMessagesView 提供正确的尺寸。*/}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <ChatMessagesView messages={messages} />
-          {isLoading && (
-            <div className="flex justify-center items-center p-2">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-              <p className="ml-2 text-gray-600">代理思考中...</p>
-            </div>
-          )}
+          <ChatMessagesView messages={messages} isLoading={isLoading} progress={progress} />
         </div>
-        <div className="w-1/3 p-4 border-l border-gray-200 bg-white overflow-hidden">
+        {/* 活动时间线区域，固定宽度并处理溢出 */}
+        <div className="w-1/3 max-w-md p-4 border-l border-gray-200 bg-white overflow-y-auto">
           <ActivityTimeline activities={activityLogs} />
         </div>
       </main>
+      {/* 输入表单区域 */}
       <footer>
         <InputForm onSendMessage={handleSendMessage} isLoading={isLoading} />
       </footer>

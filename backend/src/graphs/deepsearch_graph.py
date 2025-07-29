@@ -1,141 +1,193 @@
-from typing import Dict, Any
+import json
+import re
+from typing import Dict, Any, List, Tuple
 
 from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
 
 from backend.src.config.logging_config import get_logger
-from backend.src.graphs.search_rag_graph import SearchRagGraph
-from backend.src.graphs.writing_graph import WritingGraph
 from backend.src.llms.openai_llm import get_chat_model
-from backend.src.prompts.agent_decision_prompts import SUPERVISOR_DECISION_PROMPT
-from backend.src.schemas.graph_state import AgentState
+from backend.src.schemas.graph_state import AgentState, PlanItem
+from backend.src.graphs.research_executor import execute_research_task
+from backend.src.graphs.writing_executor import execute_writing_task, final_assembler
+from backend.src.prompts.planner_prompts import MASTER_PLANNER_PROMPT
+from backend.src.prompts.summarizer_prompts import RESEARCH_SUMMARIZER_PROMPT, OVERALL_REPORT_SUMMARIZER_PROMPT
 
-# --- 全局组件与常量定义 ---
 llm = get_chat_model()
-MAX_STEPS = 15
-NO_PROGRESS_THRESHOLD = 3
 logger = get_logger(__name__)
+
+
+def _clean_json_from_llm(llm_output: str) -> str:
+    """从LLM的输出中提取并清理JSON字符串。"""
+    match = re.search(r"```(?:json)?(.*)```", llm_output, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return llm_output.strip()
 
 
 class DeepSearchGraph:
     """
-    DeepSearch 主图（Master Graph）。
-
-    该类扮演着一个高级调度器（Orchestrator）的角色，其核心职责是根据子图返回的
-    具体状态和决策建议，智能地协调研究子图和写作子图。
+    报告生成主图
     """
 
     def __init__(self):
-        """
-        初始化主图实例。
-        """
-        self.research_graph_app = SearchRagGraph().get_graph()
-        self.writing_graph_app = WritingGraph().get_graph()
-
-        self.workflow = StateGraph(AgentState)
-        self._add_nodes()
-        self._add_edges()
-        self.app = self.workflow.compile()
-
-    def _add_nodes(self):
-        """
-        向主图注册节点。
-        """
-        self.workflow.add_node("supervisor", self.call_supervisor)
-        self.workflow.add_node("research_flow", self.research_graph_app)
-        self.workflow.add_node("writing_flow", self.writing_graph_app)
-
-    def _add_edges(self):
-        """
-        定义主图中节点之间的连接，完全符合Mermaid主图流程。
-        """
-        self.workflow.set_entry_point("supervisor")
-        self.workflow.add_conditional_edges(
-            "supervisor",
-            self.route_supervisor_action,
-            {
-                "RESEARCH": "research_flow",
-                "WRITING": "writing_flow",
-                "FINISH": END,
-                "FAIL": END,
-            },
-        )
-        # 任何子图执行完毕后，都将控制权（反馈）交还给 supervisor
-        self.workflow.add_edge("research_flow", "supervisor")
-        self.workflow.add_edge("writing_flow", "supervisor")
-
-    def call_supervisor(self, state: AgentState) -> Dict[str, Any]:
-        """
-        主管（Supervisor）节点的核心实现。
-        """
-        logger.info(f"\n==================== [主图 步骤 {state['step_count']}] ====================")
-        logger.info("进入 'supervisor' 节点：主管正在决策...")
-
-        new_step_count = state['step_count'] + 1
-        logger.info(f"当前步数更新为: {new_step_count}")
-
-        if new_step_count > MAX_STEPS:
-            logger.warning(f"已达到最大步骤数限制 ({MAX_STEPS})，强制终止。")
-            return {
-                "supervisor_decision": "FAIL",
-                "final_answer": "任务因达到最大步骤限制而终止，未能完成。",
-                "step_count": new_step_count
-            }
-        if state["consecutive_no_progress_count"] >= NO_PROGRESS_THRESHOLD:
-            logger.warning(f"连续 {state['consecutive_no_progress_count']} 步无进展，强制失败。")
-            return {
-                "supervisor_decision": "FAIL",
-                "final_answer": "任务因连续无进展而终止，未能完成。",
-                "step_count": new_step_count
-            }
-
-        # 优先采纳子图的明确反馈，这是实现“写作->搜索”的关键
-        subgraph_decision = state.get("supervisor_decision")
-        if subgraph_decision in ["RESEARCH", "WRITING", "FINISH", "FAIL"]:
-            logger.info(f"主管：接收到来自子图的明确指令 '{subgraph_decision}'，将直接执行。")
-            return {"supervisor_decision": subgraph_decision, "step_count": new_step_count}
-
-        # 如果没有明确指令（例如，任务刚开始），则调用LLM进行高层决策
-        logger.info("主管：未收到子图指令，调用LLM进行高层决策。")
-        messages_for_supervisor = state["chat_history"] + state["intermediate_steps"]
-        response = llm.invoke(
-            SUPERVISOR_DECISION_PROMPT.format_messages(
-                current_state=str(state),
-                input=state["input"],
-                intermediate_steps=messages_for_supervisor
-            )
-        )
-
-        raw_decision = response.content.strip().upper()
-        logger.info(f"主管原始响应: '{raw_decision}'")
-
-        # 解析LLM的宏观决策
-        if "PLANNER" in raw_decision or "EXECUTOR" in raw_decision or "EVALUATOR" in raw_decision:
-            supervisor_decision = "RESEARCH"
-        elif "WRITER" in raw_decision or "REVIEWER" in raw_decision or "SYNTHESIZER" in raw_decision:
-            supervisor_decision = "WRITING"
-        elif "FINISH" in raw_decision:
-            supervisor_decision = "FINISH"
-        else:
-            if new_step_count <= 1:
-                logger.info("主管：检测到初始步骤（冷启动），强制启动研究流程。")
-                supervisor_decision = "RESEARCH"
-            else:
-                supervisor_decision = "FAIL"
-
-        logger.info(f"解析后的主管决策: {supervisor_decision}")
-
-        return {"supervisor_decision": supervisor_decision, "step_count": new_step_count}
-
-    def route_supervisor_action(self, state: AgentState) -> str:
-        """
-        主管路由函数。
-        """
-        supervisor_decision = state.get("supervisor_decision", "FAIL")
-        logger.info(f"路由函数：接收到决策 '{supervisor_decision}'，将路由到 '{supervisor_decision}' 流程。")
-        return supervisor_decision
+        self.workflow = self._build_graph()
 
     def get_app(self):
-        """
-        提供对已编译的LangGraph可执行应用的公共访问接口。
-        """
-        return self.app
+        return self.workflow
+
+    def _validate_and_correct_plan(self, plan: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """计划审查员：验证并修正计划的依赖关系。"""
+        logger.info("--- [计划审查] 开始审查计划依赖关系... ---")
+        errors = []
+        corrected_plan = list(plan)
+        research_task_ids = {item['item_id'] for item in corrected_plan if item['task_type'] == 'RESEARCH'}
+        all_task_ids = {item['item_id'] for item in corrected_plan}
+
+        for i, item in enumerate(corrected_plan):
+            if item['task_type'] == 'WRITING':
+                original_deps = item.get('dependencies', [])
+                corrected_deps = []
+                for dep_id in original_deps:
+                    if dep_id not in all_task_ids:
+                        errors.append(f"依赖 '{dep_id}' 不存在，已移除。")
+                        continue
+                    if dep_id not in research_task_ids:
+                        errors.append(f"写作任务 '{item['item_id']}' 错误地依赖了非研究任务 '{dep_id}'，已移除。")
+                        continue
+                    corrected_deps.append(dep_id)
+                corrected_plan[i]['dependencies'] = corrected_deps
+
+        if errors:
+            logger.warning(f"计划审查发现并修正了 {len(errors)} 个错误: {errors}")
+        else:
+            logger.info("--- [计划审查] 审查完成，未发现依赖错误。 ---")
+        return corrected_plan, errors
+
+    async def call_planner(self, state: AgentState) -> Dict[str, Any]:
+        """节点 1: 生成初始计划，并由“审查员”进行校验。"""
+        logger.info("--- [阶段 1] 进入 planner 节点 ---")
+        prompt = MASTER_PLANNER_PROMPT.format(query=state['input'])
+        response = await llm.ainvoke(prompt)
+        cleaned_json = _clean_json_from_llm(response.content)
+        try:
+            plan_data = json.loads(cleaned_json)
+            raw_plan_list = plan_data.get("plan", [])
+            overall_outline = plan_data.get("overall_outline", "")
+
+            plan_items = []
+            for item in raw_plan_list:
+                if isinstance(item, dict):
+                    complete_item_data = {
+                        "item_id": item.get("item_id"), "task_type": item.get("task_type"),
+                        "description": item.get("description"), "dependencies": item.get("dependencies", []),
+                        "status": "pending", "content": "", "summary": None, "execution_log": [],
+                        "evaluation_results": None, "attempt_count": 0,
+                    }
+                    plan_items.append(complete_item_data)
+
+            corrected_plan, validation_errors = self._validate_and_correct_plan(plan_items)
+            final_plan = [PlanItem(**item) for item in corrected_plan]
+            error_log = state.get("error_log", [])
+            if validation_errors:
+                error_log.append({"node": "planner_validator", "errors": validation_errors})
+
+            logger.info(f"成功生成并审查了 {len(final_plan)} 个计划项。")
+            return {"plan": final_plan, "overall_outline": overall_outline, "error_log": error_log}
+        except json.JSONDecodeError:
+            logger.error(f"Planner 输出的 JSON 格式无效: {cleaned_json}")
+            return {"plan": [], "overall_outline": "", "error_log": [{"node": "planner", "error": "无法解析计划"}]}
+
+    # --- 研究阶段 supervisor/executor 模式 ---
+    def research_supervisor(self, state: AgentState) -> Dict[str, Any]:
+        """节点 2: 研究主管 - 决定下一个研究任务。"""
+        logger.info("--- [阶段 2] 进入 research_supervisor 节点 ---")
+        plan = state.get("plan", [])
+        next_research_task = next(
+            (task for task in plan if task.get("task_type") == "RESEARCH" and task.get("status") != "completed"), None)
+        if next_research_task:
+            logger.info(f"研究主管决策：委派下一个任务 '{next_research_task['description']}'")
+            return {"current_plan_item_id": next_research_task['item_id']}
+        else:
+            logger.info("研究主管决策：所有研究任务已完成，进入计划摘要阶段。")
+            return {"current_plan_item_id": None}
+
+    def route_research_action(self, state: AgentState) -> str:
+        """根据研究主管的决策进行路由。"""
+        return "research_executor" if state.get("current_plan_item_id") else "plan_summarizer"
+
+    async def call_plan_summarizer(self, state: AgentState) -> Dict[str, Any]:
+        """节点 3: 为每个写作任务生成其对应的章节摘要。"""
+        logger.info("--- [阶段 3] 进入 plan_summarizer 节点 ---")
+        plan = state.get("plan", [])
+        updated_plan = list(plan)
+        for i, item in enumerate(updated_plan):
+            if item.get("task_type") == "WRITING":
+                dependencies = item.get("dependencies", [])
+                research_content = [
+                    f"研究任务 '{next((p.get('description') for p in updated_plan if p.get('item_id') == dep_id), '')}':\n{next((p.get('content') for p in updated_plan if p.get('item_id') == dep_id), '')}"
+                    for dep_id in dependencies]
+                if not any(research_content):
+                    updated_plan[i]["content"] = f"本章旨在探讨 '{item.get('description')}'，但未能找到相关的研究资料。"
+                    continue
+                prompt = RESEARCH_SUMMARIZER_PROMPT.format(topic=item.get("description"),
+                                                           search_results_content="\n\n".join(research_content))
+                response = await llm.ainvoke(prompt)
+                updated_plan[i]["content"] = response.content
+        return {"plan": updated_plan}
+
+    async def generate_overall_summary(self, state: AgentState) -> Dict[str, Any]:
+        """节点 3.5: 生成整篇文章的核心摘要。"""
+        logger.info("--- [阶段 3.5] 进入 generate_overall_summary 节点 ---")
+        plan = state.get("plan", [])
+        all_writing_tasks = [t for t in plan if t.get("task_type") == "WRITING"]
+        if not all_writing_tasks: return {}
+        all_chapter_summaries = "\n\n---\n\n".join(
+            [f"章节目标: {t.get('description', '无描述')}\n核心内容摘要: {t.get('content', '摘要不可用。')}" for t in
+             all_writing_tasks])
+        prompt = OVERALL_REPORT_SUMMARIZER_PROMPT.format(all_chapter_summaries=all_chapter_summaries)
+        response = await llm.ainvoke(prompt)
+        return {"overall_outline": response.content}
+
+    def writing_supervisor(self, state: AgentState) -> Dict[str, Any]:
+        """节点 4: 写作主管 - 决定下一个写作任务。"""
+        plan = state.get("plan", [])
+        next_writing_task = next(
+            (task for task in plan if task.get("task_type") == "WRITING" and task.get("status") != "completed"), None)
+        return {"current_plan_item_id": next_writing_task['item_id'] if next_writing_task else None}
+
+    def route_writing_action(self, state: AgentState) -> str:
+        """根据写作主管的决策进行路由。"""
+        return "writing_executor" if state.get("current_plan_item_id") else "final_assembler"
+
+    def _build_graph(self) -> CompiledStateGraph:
+        """构建新的、支持逐章研究和写作的工作流。"""
+        workflow = StateGraph(AgentState)
+        workflow.add_node("planner", self.call_planner)
+        workflow.add_node("research_supervisor", self.research_supervisor)
+        workflow.add_node("research_executor", execute_research_task)
+        workflow.add_node("plan_summarizer", self.call_plan_summarizer)
+        workflow.add_node("generate_overall_summary", self.generate_overall_summary)
+        workflow.add_node("writing_supervisor", self.writing_supervisor)
+        workflow.add_node("writing_executor", execute_writing_task)
+        workflow.add_node("final_assembler", final_assembler)
+
+        workflow.set_entry_point("planner")
+        workflow.add_edge("planner", "research_supervisor")
+
+        # 添加研究循环
+        workflow.add_conditional_edges("research_supervisor", self.route_research_action,
+                                       {"research_executor": "research_executor", "plan_summarizer": "plan_summarizer"})
+        workflow.add_edge("research_executor", "research_supervisor")
+
+        workflow.add_edge("plan_summarizer", "generate_overall_summary")
+        workflow.add_edge("generate_overall_summary", "writing_supervisor")
+
+        workflow.add_conditional_edges("writing_supervisor", self.route_writing_action,
+                                       {"writing_executor": "writing_executor", "final_assembler": "final_assembler"})
+        workflow.add_edge("writing_executor", "writing_supervisor")
+        workflow.add_edge("final_assembler", END)
+
+        app = workflow.compile()
+        logger.info("DeepSearchGraph 构建完成。")
+        return app
