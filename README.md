@@ -1,99 +1,67 @@
-# DeepSearch AI Agent 🚀
+# 🚀 DeepSearch AI Agent
 
-**DeepSearch AI Agent** 是一个基于 LangGraph 和 FastAPI 构建的 AI 代理项目。它通过一个复杂的、自校正的流程来处理用户查询，该流程包括规划、工具执行、评估和答案生成。前端使用 React 和 Vite 构建，提供了一个流畅的聊天界面和实时的代理活动时间线。
+[![Python Version](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![React Version](https://img.shields.io/badge/React-18%2B-blue.svg)](https://reactjs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**DeepSearch AI Agent** 是一个高级AI内容创作助手，它基于 **LangGraph** 和 **FastAPI** 构建。与传统的问答机器人不同，它模拟了一个专家团队的工作流，通过“**思考-规划-研究-写作**”的动态循环，将用户的简单请求转化为结构完整、内容深入、叙事自然的专业文章、教程或技术博文。
+
 ![img.png](img.png)
 
+---
 
-## ✨ 功能
+## ✨ 核心特性
 
-- **高级代理架构**: 使用 LangGraph 的状态图（StateGraph）构建，实现了一个包含规划、执行、评估、写作和评审的完整循环，赋予代理深度思考和自我修正的能力。
-- **工具使用**:
-  - **网络搜索**: 集成了 `googlesearch`，能够从互联网获取最新信息来回答问题。
-  - **检索增强生成 (RAG)**: 利用 `LlamaIndex` 从内部知识库或动态索引的文档中检索信息，提供更具深度的答案。
-- **实时流式响应**: 后端采用 FastAPI 的 `StreamingResponse`，前端可以实时接收和显示代理的思考过程和最终答案。
-- **交互式前端**:
-  - 使用 Vite + React + TypeScript 构建，提供快速的开发体验和类型安全。
-  - 采用 Tailwind CSS 和 `shadcn/ui` 构建，界面美观且响应式。
-  - **代理活动时间线**: 实时展示代理的每一步决策（如规划、调用工具、评估结果），使用户能够直观地了解 AI 的“思考”过程。
-- **灵活的配置**: 通过 `.env` 文件和 Pydantic 设置类管理 API 密钥和模型配置，轻松切换不同的 LLM 服务（如 DeepSeek, DashScope 等）。
+- **🧠 动态叙事规划 (Dynamic Narrative Planning)**:
+  - **动态思考**: 在规划前，AI会先对主题进行“元认知分析”，判断其类型（技术、历史等）并寻找最佳的“叙事弧”，拒绝生硬模板。
+  - **专家级大纲**: 生成的计划章节标题自然、引人入胜，如同真人专家撰写，而非机械的任务描述。
 
-## 📐 架构
+- **🔄 主管-执行者模式 (Supervisor-Executor Pattern)**:
+  - **架构清晰**: 采用“研究主管”和“写作主管”分别调度各自的执行者，实现逐任务的研究和写作，确保流程清晰可控。
+  - **高可扩展性**: 每个环节都可以轻松加入评审、修正等新节点，实现更复杂的智能代理逻辑。
 
-项目采用前后端分离的架构：
+- **🔗 动态引用与RAG (Dynamic Citations & RAG)**:
+  - **精准溯源**: 写作AI通过范围化的RAG工具，只查询与当前章节相关的研究资料，确保信息准确性。
+  - **学术级引用**: 自动处理引用，在正文中生成可点击的 `[1]` 标记，并在文末统一生成符合规范的参考文献列表。
 
-1. **Frontend (React + Vite)**:
-   - 一个现代化的单页面应用 (SPA)。
-   - 负责用户交互、消息展示和与后端 API 的通信。
-   - 通过 Server-Sent Events (SSE) 接收来自后端的流式数据。
-2. **Backend (FastAPI)**:
-   - 提供一个 `/api/v1/chat/stream` API 端点用于处理聊天请求。
-   - 使用会话（Session）来维护多轮对话的状态。
-   - 核心是一个 **`DeepSearchGraph`** 实例，这是一个用 `LangGraph` 定义的状态机。
+- **📡 实时流式通信 (Real-time Streaming Communication)**:
+  - **Server-Sent Events**: 后端通过 SSE 将任务进度、新章节内容、参考文献等实时推送至前端。
+  - **前端响应式更新**: 前端能够精确解析各类事件，动态更新UI，提供流畅的实时交互体验。
 
-### LangGraph 代理流程
+- **🔧 现代化技术栈**:
+  - **后端**: FastAPI, LangGraph, LlamaIndex, Pydantic
+  - **前端**: React, Vite, TypeScript, Tailwind CSS, shadcn/ui
+  - **AI**: 灵活兼容各类大语言模型（DeepSeek, OpenAI, etc.）
 
-代理的执行流程由一个主管（Supervisor）节点控制，该节点根据当前状态决定将任务路由到哪个子代理：
+---
 
-1. 主图与子图交互流程图
+## 📐 架构解析
+
+项目采用前后端分离架构。其核心是基于 **LangGraph** 构建的、遵循**主管-执行者 (Supervisor-Executor)** 设计模式的事件驱动工作流。
+
+### LangGraph 工作流
+
+此工作流的核心是两个独立的、由主管节点控制的循环（分别用于研究和写作），这使得任务级的进度追踪和模块化操作成为可能。
 
 ```mermaid
 graph TD
-    A[开始] --> B{Supervisor 决策};
-    B -- 需要研究? --> C["执行 SearchRagGraph (研究子图)"];
-    C -- 反馈 --> B;
-    B -- 可以写作? --> D["执行 WritingGraph (写作子图)"];
-    D -- 反馈 --> B;
-    B -- 任务完成? --> E[结束];
-    B -- 任务失败? --> E;
+    A[用户请求] --> B(Planner - 规划师);
+    B --> C{Research Supervisor - 研究主管};
+    C -- "有下一个研究任务?" --> D[Research Executor - 研究执行者];
+    D --> C;
+    C -- "所有研究完成" --> E(Plan Summarizer - 计划摘要);
+    E --> F(Overall Summarizer - 核心摘要);
+    F --> G{Writing Supervisor - 写作主管};
+    G -- "有下一个写作任务?" --> H[Writing Executor - 写作执行者];
+    H --> G;
+    G -- "所有写作完成" --> I(Final Assembler - 引用整合);
+    I --> J[最终文章];
 
+    style B fill:#D6EAF8,stroke:#3498DB,stroke-width:2px
     style C fill:#D6EAF8,stroke:#3498DB,stroke-width:2px
-    style D fill:#D5F5E3,stroke:#2ECC71,stroke-width:2px
+    style G fill:#D5F5E3,stroke:#2ECC71,stroke-width:2px
+    style I fill:#FDEDEC,stroke:#E74C3C,stroke-width:2px
 ```
-
-
-
-
-2. SearchRagGraph (搜索思考子图) 内部详细流程
-
-```mermaid
-graph TD
-    subgraph 搜索思考子图
-        A["规划研究 (outline_planner)"] --> B["执行搜索 (executor)"];
-        B --> C{"评估结果 (evaluator)"};
-        C -- "结果不足? 重新规划" --> A;
-        C -- "结果充足或失败?" --> D["结束子图 & 反馈主图"];
-    end
-
-    style A fill:#D6EAF8,stroke:#3498DB
-    style B fill:#D6EAF8,stroke:#3498DB
-    style C fill:#EBDEF0,stroke:#9B59B6
-    style D fill:#FDEDEC,stroke:#E74C3C
-```
-
-3. WritingGraph (写作思考子图) 内部详细流程
-
-```mermaid
-graph TD
-    subgraph 写作思考子图
-        A["规划大纲 (writer_planner)"] --> B["撰写报告 (writer)"];
-        B --> C{"评审报告 (reviewer)"};
-        C -- "报告需修改?" --> A;
-        C -- "报告合格或材料不足?" --> D["结束子图 & 反馈主图"];
-    end
-
-    style A fill:#D5F5E3,stroke:#2ECC71
-    style B fill:#D5F5E3,stroke:#2ECC71
-    style C fill:#EBDEF0,stroke:#9B59B6
-    style D fill:#FDEDEC,stroke:#E74C3C
-```
-## 🛠️ 技术栈
-
-|              | **技术**                                                     |
-| ------------ | ------------------------------------------------------------ |
-| **后端**     | Python, FastAPI, Langchain, LangGraph, LlamaIndex, Pydantic, Uvicorn |
-| **前端**     | React, TypeScript, Vite, Tailwind CSS, shadcn/ui, lucide-react |
-| **AI 模型**  | DeepSeek (默认), DashScope (用于嵌入), 兼容 OpenAI 的各类模型 |
-| **核心依赖** | `langchain-core`, `langgraph`, `llama-index`, `fastapi`, `react`, `vite` |
 
 ## 🚀 快速开始
 
@@ -106,11 +74,14 @@ cd deepseek_deepsearch_quickstart
 
 ### 2. 后端设置
 
-a. **创建并激活虚拟环境** (推荐):
+a. **创建并激活虚拟环境**:
 
 ```
 python -m venv venv
-source venv/bin/activate  # on Windows, use `venv\Scripts\activate`
+# Windows
+venv\Scripts\activate
+# macOS/Linux
+source venv/bin/activate
 ```
 
 b. **安装依赖**:
@@ -122,30 +93,20 @@ pip install -r requirements.txt
 
 c. 配置环境变量:
 
-在 backend/src/ 目录下，复制 .env 文件。
+复制 backend/src/.env.example 为 backend/src/.env，并填入你的 API 密钥。
 
 ```
-cp backend/src/.env.example backend/src/.env
-```
-
-然后编辑 `.env` 文件，填入你的 API 密钥：
-
-```
-# .env
+# backend/src/.env
 
 # 用于 RAG 嵌入
 DASH_SCOPE_API_KEY=sk-your-dashscope-api-key
-DASH_SCOPE_EMBEDDING_MODEL=text-embedding-v1
 
 # 用于 LLM 推理
 DEEPSEEK_API_KEY=sk-your-deepseek-api-key
-DEEPSEEK_CHAT_MODEL=deepseek-chat
-DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_BASE_URL=[https://api.deepseek.com](https://api.deepseek.com)
 ```
 
 ### 3. 前端设置
-
-a. **安装依赖**:
 
 ```
 cd frontend
@@ -154,78 +115,42 @@ npm install
 
 ### 4. 运行应用
 
-a. 启动后端服务器:
-
-在 backend 目录下运行：
+a. **启动后端 (终端1)**:
 
 ```
+cd backend
 uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-服务器将在 `http://localhost:8000` 启动。
-
-b. 启动前端开发服务器:
-
-在 frontend 目录下运行：
+b. **启动前端 (终端2)**:
 
 ```
+cd frontend
 npm run dev
 ```
 
-应用将在 `http://localhost:5173` 启动。
-
-现在，打开浏览器访问 `http://localhost:5173` 即可开始与 DeepSearch AI Agent 交互！
+现在，在浏览器中打开 `http://localhost:5173`，即可开始体验！
 
 ## 📂 项目结构
 
 ```
-deepseek_deepsearch_quickstart/
+/
 ├── backend/
 │   ├── src/
-│   │   ├── api/
-│   │   │   └── main.py           # FastAPI 应用主入口
-│   │   ├── config/
-│   │   │   └── settings.py       # Pydantic 配置管理
-│   │   ├── graphs/               # agent 编排
-│   │   ├── llms/
-│   │   │   └── openai_llm.py     # LLM 模型加载
-│   │   ├── prompts/              # 存放所有 Prompt
-│   │   ├── schemas/              # Pydantic 数据模型
-│   │   ├── services/             # 外部服务封装 (搜索, LlamaIndex)
-│   │   ├── tools/                # Langchain 工具定义
-│   │   └── .env                  # 环境变量
-│   └── requirements.txt          # Python 依赖
+│   │   ├── api/main.py         # FastAPI 入口
+│   │   ├── graphs/             # LangGraph 工作流定义
+│   │   ├── prompts/            # 所有 Prompt 模板
+│   │   ├── services/           # 外部服务 (LlamaIndex)
+│   │   └── ...
+│   └── requirements.txt
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── components/           # UI 组件
-│   │   ├── features/             # 核心功能模块 (如聊天)
-│   │   ├── lib/                  # 工具函数
-│   │   ├── App.tsx               # 应用主组件
-│   │   └── main.tsx              # 应用入口
-│   ├── package.json              # Node.js 依赖和脚本
-│   └── vite.config.ts            # Vite 配置文件
+│   │   ├── components/         # 可复用UI组件
+│   │   ├── features/           # 核心功能模块 (聊天、日志)
+│   │   ├── App.tsx             # 应用主组件
+│   │   └── ...
+│   └── package.json
 │
-└── README.md                     # 本文档
+└── README.md
 ```
-
-## 📜 API 端点
-
-- `GET /`: 健康检查端点。
-
-- `POST /api/v1/chat/stream`: 接收聊天消息并以流式方式返回响应。
-
-  - **请求体**:
-
-    ```
-    {
-      "message": "你的问题是什么？",
-      "session_id": "一个唯一的用户会话 ID"
-    }
-    ```
-
-  - **响应**: 一个 `text/event-stream` 流，包含多种类型的事件，如 `activity_update` 和 `final_response`。
-  -
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=LordFoxFairy/deepseek_deepsearch_quickstart&type=Date)](https://www.star-history.com/#LordFoxFairy/deepseek_deepsearch_quickstart&Date)

@@ -1,66 +1,55 @@
-import * as React from "react";
-import { ScrollArea } from "./ui/scroll-area";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Dot } from "lucide-react";
-import { renderMarkdownWithLinks } from "../utils/markdown_parser";
+import React from 'react';
+import { ScrollArea } from '../components/ui/scroll-area';
+import { CheckCircle, Zap } from 'lucide-react';
 
-// Define activity log type
+// 定义单个日志条目的类型
 interface ActivityLog {
-  step_name: string; // Step name (e.g., "supervisor", "planner", "executor")
-  output: string;    // Output or brief description of the step
-  timestamp: string; // Timestamp of the activity
+  id: string;
+  message: string;
+  timestamp: string;
 }
 
-// Define ActivityTimeline component props type
 interface ActivityTimelineProps {
-  activities: ActivityLog[]; // List of activity logs
+  activities: ActivityLog[];
 }
 
-// ActivityTimeline component
 const ActivityTimeline: React.FC<ActivityTimelineProps> = ({ activities }) => {
-  const timelineEndRef = React.useRef<HTMLDivElement>(null); // Used for auto-scrolling to bottom
-
-  // Auto-scroll to bottom when activities update
-  React.useEffect(() => {
-    if (timelineEndRef.current) {
-      timelineEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [activities]);
-
   return (
-    <Card className="w-full h-full flex flex-col">
-      <CardHeader className="p-4 border-b">
-        <CardTitle className="text-lg">代理活动时间线</CardTitle>
-      </CardHeader>
-      <CardContent className="flex-1 p-4 overflow-hidden">
-        <ScrollArea className="h-full pr-4"> {/* Add right padding to avoid scrollbar obscuring content */}
-          <div className="relative pl-6"> {/* Left padding for timeline markers */}
-            {activities.map((activity, index) => (
-              <div key={index} className="mb-4 relative">
-                {/* 时间线连接线 */}
-                {index < activities.length - 1 && (
-                  <div className="absolute left-2 top-0 h-full w-0.5 bg-gray-300"></div>
-                )}
-                {/* 时间线圆点标记 */}
-                <div className="absolute left-0 top-1.5 flex items-center justify-center w-5 h-5 rounded-full bg-blue-500 text-white z-10">
-                  <Dot className="h-4 w-4" />
-                </div>
-
-                <div className="ml-6">
-                  <p className="text-sm font-semibold text-gray-800">{activity.step_name}</p>
-                  <p className="text-xs text-gray-500">{activity.timestamp}</p>
-                  {/* Use renderMarkdownWithLinks to parse and render Markdown content, preserving whitespace */}
-                  <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">
-                    {renderMarkdownWithLinks(activity.output)}
+    <div className="flex flex-col h-full">
+      <h3 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b">全局实时日志</h3>
+      <ScrollArea className="flex-1 -mr-4 pr-4">
+        <div className="space-y-4">
+          {activities.length === 0 ? (
+            <div className="text-center text-gray-500 mt-8">
+              <Zap className="mx-auto h-12 w-12 text-gray-400" />
+              <p className="mt-2 text-sm">等待任务开始...</p>
+              <p className="text-xs text-gray-400">AI 的详细思考过程将在这里实时显示。</p>
+            </div>
+          ) : (
+            activities.map((activity, index) => (
+              <div key={activity.id} className="flex items-start">
+                <div className="flex flex-col items-center mr-4">
+                  <div className="flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full">
+                    <CheckCircle className="w-5 h-5 text-blue-600" />
                   </div>
+                  {index < activities.length - 1 && (
+                    <div className="w-px h-6 bg-gray-200 mt-1"></div>
+                  )}
+                </div>
+                <div className="flex-1 pt-1">
+                  <p className="text-sm text-gray-700 break-words">
+                    {activity.message}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {activity.timestamp}
+                  </p>
                 </div>
               </div>
-            ))}
-            <div ref={timelineEndRef} /> {/* Scroll target */}
-          </div>
-        </ScrollArea>
-      </CardContent>
-    </Card>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   );
 };
 
