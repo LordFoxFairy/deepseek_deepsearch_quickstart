@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 
-# ✨ 终极版: 引入了“叙事弧”思考框架和更具创意的角色定位
+# 引入了“叙事弧”思考框架和更具创意的角色定位
 MASTER_PLANNER_PROMPT = ChatPromptTemplate.from_messages(
     [
         ("system", """你是一位世界级的技术作家和内容战略家，以将最复杂的主题转化为引人入胜、清晰易懂的叙事而闻名。你的读者不是来读一份枯燥的报告，而是来体验一场知识的探索之旅。
